@@ -269,10 +269,10 @@ const navigation = [
 ];
 
 const navigationGroups: Array<{ title: string; items: SectionId[] }> = [
-  { title: 'Ümumi', items: ['overview'] },
   { title: 'Təşkilatlar', items: ['organizationStructure', 'organizationStructureTypes'] },
   { title: 'Hesab', items: ['profile', 'users', 'roles', 'permissions', 'userDocumentTypeAccess'] },
-  { title: 'Sənədlər', items: ['fileProcessings', 'documentTypes', 'baseDocuments', 'documents', 'documentMovements', 'advancedSearch', 'locations'] },
+  { title: 'Sənəd növü sazlamaları', items: ['locations', 'documentTypes'] },
+  { title: 'Sənədlər', items: ['advancedSearch', 'fileProcessings', 'baseDocuments', 'documents', 'documentMovements'] },
 ];
 
 const sectionPermissionKeywords: Record<Exclude<SectionId, 'overview' | 'profile'>, string[]> = {
@@ -662,6 +662,23 @@ export function AdminPage() {
         .filter((group) => group.items.length > 0),
     [visibleNavigation]
   );
+
+  const overviewNavigationItem = useMemo(
+    () => visibleNavigation.find((item) => item.id === 'overview') || null,
+    [visibleNavigation]
+  );
+
+  const [collapsedNavigationGroups, setCollapsedNavigationGroups] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    setCollapsedNavigationGroups((current) => {
+      const next: Record<string, boolean> = {};
+      for (const group of visibleNavigationGroups) {
+        next[group.title] = current[group.title] ?? false;
+      }
+      return next;
+    });
+  }, [visibleNavigationGroups]);
 
   const hasAnyAccessibleSection = useMemo(
     () => visibleNavigation.some((item) => item.id !== 'overview'),
@@ -1487,51 +1504,106 @@ export function AdminPage() {
       </Box>
 
       <List sx={{ px: 1.5 }}>
-        {visibleNavigationGroups.map((group) => (
-          <Box key={group.title} sx={{ mb: 1.25 }}>
-            <Typography
-              variant="caption"
+        {overviewNavigationItem ? (
+          <Box sx={{ mb: 1.25 }}>
+            <ListItemButton
+              selected={activeSection === overviewNavigationItem.id}
+              onClick={() => {
+                setActiveSection(overviewNavigationItem.id);
+                setMobileNavOpen(false);
+              }}
               sx={{
-                color: 'rgba(255,255,255,0.55)',
-                px: 1.25,
-                pb: 0.5,
-                display: 'block',
-                textTransform: 'uppercase',
-                letterSpacing: 0.6,
-                fontWeight: 700
+                borderRadius: 3,
+                mb: 0.75,
+                color: 'rgba(255,255,255,0.86)',
+                '&.Mui-selected': {
+                  bgcolor: alpha('#ffffff', 0.16)
+                },
+                '&.Mui-selected:hover': {
+                  bgcolor: alpha('#ffffff', 0.2)
+                }
               }}
             >
-              {group.title}
-            </Typography>
-            {group.items.map((item) => {
-              const Icon = item.icon;
-              return (
-                <ListItemButton
-                  key={item.id}
-                  selected={activeSection === item.id}
-                  onClick={() => {
-                    setActiveSection(item.id);
-                    setMobileNavOpen(false);
-                  }}
-                  sx={{
-                    borderRadius: 3,
-                    mb: 0.75,
-                    color: 'rgba(255,255,255,0.86)',
-                    '&.Mui-selected': {
-                      bgcolor: alpha('#ffffff', 0.16)
-                    },
-                    '&.Mui-selected:hover': {
-                      bgcolor: alpha('#ffffff', 0.2)
-                    }
-                  }}
-                >
-                  <ListItemIcon sx={{ minWidth: 42, color: 'inherit' }}>
-                    <Icon />
-                  </ListItemIcon>
-                  <ListItemText primary={item.label} />
-                </ListItemButton>
-              );
-            })}
+              <ListItemIcon sx={{ minWidth: 42, color: 'inherit' }}>
+                <DashboardRounded />
+              </ListItemIcon>
+              <ListItemText primary={overviewNavigationItem.label} />
+            </ListItemButton>
+          </Box>
+        ) : null}
+
+        {visibleNavigationGroups.map((group) => (
+          <Box key={group.title} sx={{ mb: 1.25 }}>
+            <ListItemButton
+              onClick={() =>
+                setCollapsedNavigationGroups((current) => ({
+                  ...current,
+                  [group.title]: !current[group.title]
+                }))
+              }
+              sx={{
+                px: 1.25,
+                py: 0.75,
+                mb: 0.5,
+                borderRadius: 2,
+                bgcolor: alpha('#ffffff', 0.06),
+                border: '1px solid',
+                borderColor: alpha('#ffffff', 0.12),
+                '&:hover': {
+                  bgcolor: alpha('#ffffff', 0.1)
+                }
+              }}
+            >
+              <ListItemText
+                primary={group.title}
+                primaryTypographyProps={{
+                  variant: 'caption',
+                  fontWeight: 800,
+                  letterSpacing: 0.7,
+                  textTransform: 'uppercase',
+                  color: 'rgba(255,255,255,0.88)'
+                }}
+              />
+              <ExpandMoreRounded
+                sx={{
+                  color: 'rgba(255,255,255,0.72)',
+                  transform: collapsedNavigationGroups[group.title] ? 'rotate(-90deg)' : 'rotate(0deg)',
+                  transition: 'transform 0.2s ease'
+                }}
+              />
+            </ListItemButton>
+
+            <Collapse in={!collapsedNavigationGroups[group.title]} timeout="auto" unmountOnExit>
+              {group.items.map((item) => {
+                const Icon = item.icon;
+                return (
+                  <ListItemButton
+                    key={item.id}
+                    selected={activeSection === item.id}
+                    onClick={() => {
+                      setActiveSection(item.id);
+                      setMobileNavOpen(false);
+                    }}
+                    sx={{
+                      borderRadius: 3,
+                      mb: 0.75,
+                      color: 'rgba(255,255,255,0.86)',
+                      '&.Mui-selected': {
+                        bgcolor: alpha('#ffffff', 0.16)
+                      },
+                      '&.Mui-selected:hover': {
+                        bgcolor: alpha('#ffffff', 0.2)
+                      }
+                    }}
+                  >
+                    <ListItemIcon sx={{ minWidth: 42, color: 'inherit' }}>
+                      <Icon />
+                    </ListItemIcon>
+                    <ListItemText primary={item.label} />
+                  </ListItemButton>
+                );
+              })}
+            </Collapse>
           </Box>
         ))}
       </List>
