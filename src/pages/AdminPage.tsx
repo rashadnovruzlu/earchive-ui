@@ -36,6 +36,7 @@ import {
   Stack,
   Switch,
   Table,
+  Skeleton,
   TableBody,
   TableCell,
   TableContainer,
@@ -52,6 +53,7 @@ import {
 import ExpandMoreRounded from '@mui/icons-material/ExpandMoreRounded';
 import AccessTimeRounded from '@mui/icons-material/AccessTimeRounded';
 import AddRounded from '@mui/icons-material/AddRounded';
+import ErrorRounded from '@mui/icons-material/ErrorRounded';
 import AdminPanelSettingsRounded from '@mui/icons-material/AdminPanelSettingsRounded';
 import ArchiveRounded from '@mui/icons-material/ArchiveRounded';
 import BadgeRounded from '@mui/icons-material/BadgeRounded';
@@ -89,6 +91,7 @@ import CloseRounded from '@mui/icons-material/CloseRounded';
 import { alpha } from '@mui/material/styles';
 import { useAuth } from '../features/auth/AuthProvider';
 import { api } from '../lib/api';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import { DocumentsPage } from './DocumentsPage';
 import { DocumentMovementsPage } from './DocumentMovementsPage';
 import { AdvancedSearchPage } from './AdvancedSearchPage';
@@ -113,10 +116,18 @@ import {
   type UpsertDocumentTypePayload,
   type User
 } from '../types/api';
+import type { DashboardStats } from '../types/api';
 
 type Notice = {
   tone: 'success' | 'error';
   message: string;
+};
+
+type ConfirmDeleteState = {
+  open: boolean;
+  title: string;
+  message: string;
+  onConfirm: (() => Promise<void>) | null;
 };
 
 type SectionId =
@@ -170,6 +181,8 @@ type DocumentTypeFormState = {
   id?: string;
   name: string;
   description: string;
+  index: number;
+  counter: number;
   retentionMonth: number;
   refs: EmbeddedRefFormState[];
 };
@@ -218,6 +231,23 @@ type BaseDocumentFilesDialogState = {
   pdfMaximized: boolean;
 };
 
+const imageMimeTypes = new Set([
+  'image/jpeg',
+  'image/jpg',
+  'image/png',
+  'image/webp',
+  'image/gif',
+  'image/bmp',
+  'image/svg+xml'
+]);
+
+const imageExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.svg'];
+
+function isImageFile(mimeType: string, fileName: string) {
+  const lowerName = fileName.toLowerCase();
+  return imageMimeTypes.has(mimeType.toLowerCase()) || imageExtensions.some((ext) => lowerName.endsWith(ext));
+}
+
 const drawerWidth = 290;
 
 const navigation = [
@@ -240,9 +270,9 @@ const navigation = [
 
 const navigationGroups: Array<{ title: string; items: SectionId[] }> = [
   { title: 'Ümumi', items: ['overview'] },
+  { title: 'Təşkilatlar', items: ['organizationStructure', 'organizationStructureTypes'] },
   { title: 'Hesab', items: ['profile', 'users', 'roles', 'permissions', 'userDocumentTypeAccess'] },
   { title: 'Sənədlər', items: ['fileProcessings', 'documentTypes', 'baseDocuments', 'documents', 'documentMovements', 'advancedSearch', 'locations'] },
-  { title: 'Quruluş', items: ['organizationStructure', 'organizationStructureTypes'] }
 ];
 
 const sectionPermissionKeywords: Record<Exclude<SectionId, 'overview' | 'profile'>, string[]> = {
@@ -304,6 +334,8 @@ const emptyRoleForm = (): RoleFormState => ({
 const emptyDocumentTypeForm = (): DocumentTypeFormState => ({
   name: '',
   description: '',
+  index: 1,
+  counter: 0,
   retentionMonth: 12,
   refs: []
 });
@@ -420,6 +452,13 @@ export function AdminPage() {
   const [roleForm, setRoleForm] = useState<RoleFormState>(emptyRoleForm());
   const [documentTypeForm, setDocumentTypeForm] = useState<DocumentTypeFormState>(emptyDocumentTypeForm());
   const [notice, setNotice] = useState<Notice | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<ConfirmDeleteState>({
+    open: false,
+    title: '',
+    message: '',
+    onConfirm: null
+  });
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [isBusy, setIsBusy] = useState(false);
   const [isBootstrapping, setIsBootstrapping] = useState(true);
   const [userFormOpen, setUserFormOpen] = useState(false);
@@ -447,6 +486,11 @@ export function AdminPage() {
   const [baseDocuments, setBaseDocuments] = useState<BaseDocument[]>([]);
   const [baseDocumentTotal, setBaseDocumentTotal] = useState(0);
   const [baseDocumentPage, setBaseDocumentPage] = useState(0);
+  const [dashStats, setDashStats] = useState<DashboardStats | null>(null);
+  const [dashLoading, setDashLoading] = useState(false);
+  const [dashError, setDashError] = useState<string | null>(null);
+  const [dashLastUpdated, setDashLastUpdated] = useState<Date | null>(null);
+  const [dashNow, setDashNow] = useState(() => Date.now());
   const [baseDocumentPageSize, setBaseDocumentPageSize] = useState(20);
   const [baseDocumentSearchInput, setBaseDocumentSearchInput] = useState('');
   const [baseDocumentQuery, setBaseDocumentQuery] = useState('');
@@ -507,7 +551,7 @@ export function AdminPage() {
     const query = docTypeSearch.trim().toLowerCase();
     if (!query) return documentTypes;
     return documentTypes.filter((item) => {
-      const value = `${item.name} ${item.description || ''} ${item.retentionMonth}`.toLowerCase();
+      const value = `${item.name} ${item.description || ''} ${item.index} ${item.counter} ${item.retentionMonth}`.toLowerCase();
       return value.includes(query);
     });
   }, [documentTypes, docTypeSearch]);
@@ -624,6 +668,20 @@ export function AdminPage() {
     [visibleNavigation]
   );
 
+  const dashboardElapsedLabel = useMemo(() => {
+    if (!dashLastUpdated) {
+      return null;
+    }
+
+    const elapsedSeconds = Math.max(0, Math.floor((dashNow - dashLastUpdated.getTime()) / 1000));
+    const hours = Math.floor(elapsedSeconds / 3600);
+    const minutes = Math.floor((elapsedSeconds % 3600) / 60);
+    const seconds = elapsedSeconds % 60;
+    const elapsed = [hours, minutes, seconds].map((part) => String(part).padStart(2, '0')).join(':');
+
+    return `Son yenilənmədən keçən: ${elapsed}`;
+  }, [dashLastUpdated, dashNow]);
+
   const notificationsMenuOpen = Boolean(notificationAnchorEl);
 
   async function loadFileProcessings() {
@@ -732,6 +790,21 @@ export function AdminPage() {
       if (message.includes('Unauthorized')) {
         logout();
       }
+    }
+  }
+
+  async function loadDashboardStats() {
+    setDashLoading(true);
+    setDashError(null);
+    try {
+      const stats = await api.getDashboardStats();
+      setDashStats(stats);
+      setDashLastUpdated(new Date());
+      setDashNow(Date.now());
+    } catch (err) {
+      setDashError(err instanceof Error ? err.message : 'Dashboard məlumatları yüklənmədi.');
+    } finally {
+      setDashLoading(false);
     }
   }
 
@@ -902,6 +975,24 @@ export function AdminPage() {
   }, []);
 
   useEffect(() => {
+    void loadDashboardStats();
+    const timer = window.setInterval(() => void loadDashboardStats(), 45000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!dashLastUpdated) {
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      setDashNow(Date.now());
+    }, 1000);
+
+    return () => window.clearInterval(timer);
+  }, [dashLastUpdated]);
+
+  useEffect(() => {
     if (activeSection !== 'permissions') {
       return;
     }
@@ -977,6 +1068,21 @@ export function AdminPage() {
       }
     } finally {
       setIsBusy(false);
+    }
+  }
+
+  const openDeleteConfirm = (title: string, message: string, onConfirm: () => Promise<void>) => {
+    setConfirmDelete({ open: true, title, message, onConfirm });
+  };
+
+  async function handleConfirmDelete() {
+    if (!confirmDelete.onConfirm) return;
+    setConfirmingDelete(true);
+    try {
+      await confirmDelete.onConfirm();
+    } finally {
+      setConfirmingDelete(false);
+      setConfirmDelete({ open: false, title: '', message: '', onConfirm: null });
     }
   }
 
@@ -1106,7 +1212,7 @@ export function AdminPage() {
     }
   }
 
-  async function handleBaseDocumentFilePdfPreview(fileId: string, fileName: string) {
+  async function handleBaseDocumentFilePreview(fileId: string, fileName: string) {
     try {
       const { blob } = await api.downloadBaseDocumentFile(fileId);
       const url = URL.createObjectURL(blob);
@@ -1115,7 +1221,7 @@ export function AdminPage() {
         return { ...c, pdfPreviewFileId: fileId, pdfPreviewFileName: fileName, pdfBlobUrl: url };
       });
     } catch {
-      setNotice({ tone: 'error', message: 'PDF göstərilərkən xəta baş verdi.' });
+      setNotice({ tone: 'error', message: 'Fayl önizləməsi göstərilərkən xəta baş verdi.' });
     }
   }
 
@@ -1233,6 +1339,8 @@ export function AdminPage() {
       const payload: UpsertDocumentTypePayload = {
         name: documentTypeForm.name,
         description: documentTypeForm.description || undefined,
+        index: Number(documentTypeForm.index),
+        counter: Number(documentTypeForm.counter),
         retentionMonth: Number(documentTypeForm.retentionMonth),
         references: documentTypeForm.refs.map((ref) => ({
           id: ref.id || undefined,
@@ -1297,6 +1405,8 @@ export function AdminPage() {
       id: item.id,
       name: item.name,
       description: item.description || '',
+      index: item.index,
+      counter: item.counter,
       retentionMonth: item.retentionMonth,
       refs: []
     });
@@ -1372,7 +1482,7 @@ export function AdminPage() {
           İdarəetmə Paneli
         </Typography>
         <Typography sx={{ color: 'rgba(255,255,255,0.72)', mt: 1 }} variant="body2">
-          Arxiv girişini, metadata qaydalarını və sənəd quraşdırmasını bir yerdən idarə edin.
+          Arxiv girişini, metadata qaydalarını və sənəd sazlanması bir yerdən idarə edin.
         </Typography>
       </Box>
 
@@ -1576,118 +1686,216 @@ export function AdminPage() {
             {isBootstrapping ? <Alert severity="info">API-dən admin məlumatları yüklənir.</Alert> : null}
 
             {activeSection === 'overview' && sectionAccess.overview ? (
-              <Stack spacing={2}>
-                {/* Stat cards */}
+              <Stack spacing={3}>
                 <Box
                   sx={{
-                    display: 'grid',
-                    gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', lg: 'repeat(3, 1fr)' },
-                    gap: 0,
+                    borderRadius: 3,
+                    p: { xs: 2, md: 3 },
                     border: '1px solid',
-                    borderColor: 'divider',
-                    borderRadius: '4px'
+                    borderColor: alpha(theme.palette.primary.main, 0.2),
+                    background: `linear-gradient(135deg, ${alpha(theme.palette.primary.main, 0.12)} 0%, ${alpha('#ffffff', 0.96)} 55%)`,
+                    position: 'relative',
+                    overflow: 'hidden'
                   }}
                 >
-                  {[
-                    { label: 'İstifadəçilər', value: totalUsers, icon: <GroupsRounded sx={{ fontSize: 32 }} />, color: '#0057B8', hint: 'Aktiv hesablar' },
-                    { label: 'Rollar', value: roles.length, icon: <BadgeRounded sx={{ fontSize: 32 }} />, color: '#7b1fa2', hint: 'Giriş profilləri' },
-                    { label: 'Sənəd növləri', value: documentTypes.length, icon: <FolderSpecialRounded sx={{ fontSize: 32 }} />, color: '#e65100', hint: 'Arxiv kateqoriyaları' }
-                  ].map((card, i) => (
-                    <Box
-                      key={card.label}
-                      sx={{
-                        p: 3,
-                        borderRight: i < 2 ? '1px solid' : 'none',
-                        borderColor: 'divider',
-                        display: 'flex',
-                        alignItems: 'flex-start',
-                        gap: 2,
-                        bgcolor: 'background.paper',
-                        transition: 'background 0.15s',
-                        '&:hover': { bgcolor: 'action.hover' }
-                      }}
-                    >
-                      <Box sx={{ color: card.color, mt: 0.5, flexShrink: 0 }}>{card.icon}</Box>
-                      <Box>
-                        <Typography variant="h3" fontWeight={800} sx={{ color: card.color, lineHeight: 1 }}>{card.value}</Typography>
-                        <Typography variant="body2" fontWeight={600} sx={{ mt: 0.5 }}>{card.label}</Typography>
-                        <Typography variant="caption" color="text.secondary">{card.hint}</Typography>
-                      </Box>
-                    </Box>
-                  ))}
-                </Box>
-
-                {/* Session + Quick nav */}
-                <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: '1fr 1fr' }, gap: 2 }}>
-                  {/* Cari istifadəçi */}
-                  <Card sx={{ borderRadius: '4px', boxShadow: 'none', border: '1px solid', borderColor: 'divider', position: 'relative', zIndex: 1 }}>
-                    <CardHeader
-                      avatar={
-                        <Avatar sx={{ bgcolor: 'primary.main', width: 48, height: 48, fontSize: 20 }}>
-                          {session?.username?.slice(0, 1).toUpperCase() ?? 'A'}
-                        </Avatar>
-                      }
-                      title={<Typography variant="h6" fontWeight={700}>{session?.username}</Typography>}
-                      subheader="Administrator"
-                      sx={{ borderBottom: '1px solid', borderColor: 'divider' }}
-                    />
-                    <CardContent>
-                      <Typography variant="overline" color="text.secondary" fontWeight={600}>Rollar</Typography>
-                      <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ mt: 1 }}>
-                        {session?.roles.length ? (
-                          session.roles.map((role) => (
-                            <Chip key={role} label={role} color="primary" size="small" icon={<BadgeRounded />} />
-                          ))
-                        ) : (
-                          <Typography color="text.secondary" variant="body2">Token rol qaytarmadı.</Typography>
-                        )}
-                      </Stack>
-                    </CardContent>
-                  </Card>
-
-                  {/* Quick nav */}
-                  <Card sx={{ borderRadius: '4px', boxShadow: 'none', border: '1px solid', borderColor: 'divider', position: 'relative', zIndex: 1 }}>
-                    <CardHeader
-                      title={<Typography variant="h6" fontWeight={700}>Sürətli keçid</Typography>}
-                      subheader="Bölməyə birbaşa daxil olun"
-                      sx={{ borderBottom: '1px solid', borderColor: 'divider' }}
-                    />
-                    <CardContent>
-                      <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 1.5 }}>
-                        {visibleNavigation.filter((n) => n.id !== 'overview').map((item) => {
-                          const Icon = item.icon;
-                          return (
-                            <Button
-                              key={item.id}
-                              variant="outlined"
-                              startIcon={<Icon />}
-                              onClick={() => setActiveSection(item.id)}
-                              sx={{ justifyContent: 'flex-start', borderRadius: '4px', py: 1.5 }}
-                            >
-                              {item.label}
-                            </Button>
-                          );
-                        })}
-                      </Box>
-                    </CardContent>
-                  </Card>
-                </Box>
-
-                {/* System info */}
-                <Card sx={{ borderRadius: '4px', boxShadow: 'none', border: '1px solid', borderColor: 'divider', position: 'relative', zIndex: 1 }}>
-                  <CardHeader
-                    avatar={<AccessTimeRounded color="action" />}
-                    title={<Typography variant="subtitle1" fontWeight={700}>Sistem məlumatı</Typography>}
-                    sx={{ borderBottom: '1px solid', borderColor: 'divider', py: 1.5 }}
+                  <Box
+                    sx={{
+                      position: 'absolute',
+                      top: -70,
+                      right: -40,
+                      width: 220,
+                      height: 220,
+                      borderRadius: '50%',
+                      background: alpha(theme.palette.secondary.main, 0.12)
+                    }}
                   />
-                  <CardContent sx={{ py: 1.5 }}>
-                    <Alert severity="info" sx={{ borderRadius: '4px' }}>
-                      İcazələr rol əsaslıdır. Rollar bölməsindən rol yaradın, sonra İcazələr bölməsindən API əməliyyatlarını konfiqurasiya edin.
-                    </Alert>
-                  </CardContent>
-                </Card>
+                  <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems={{ xs: 'flex-start', md: 'center' }} justifyContent="space-between" sx={{ position: 'relative', zIndex: 1 }}>
+                    <Stack spacing={0.7}>
+                      <Typography variant="overline" color="primary.main" fontWeight={700}>
+                        E-Archive idarəetmə paneli
+                      </Typography>
+                      <Typography variant="h4" fontWeight={800} sx={{ lineHeight: 1.1 }}>
+                        Dashboard
+                      </Typography>
+                      <Stack direction="row" spacing={1} flexWrap="wrap">
+                        <Chip
+                          size="small"
+                          label={dashLoading ? 'Məlumatlar yenilənir' : 'Məlumatlar aktivdir'}
+                          color={dashLoading ? 'warning' : 'success'}
+                          variant="outlined"
+                        />
+                        {dashboardElapsedLabel ? (
+                          <Chip
+                            size="small"
+                            variant="outlined"
+                            label={dashboardElapsedLabel}
+                          />
+                        ) : null}
+                      </Stack>
+                    </Stack>
+                    <Button
+                      variant="contained"
+                      startIcon={dashLoading ? <CircularProgress size={14} color="inherit" /> : <RefreshRounded />}
+                      onClick={() => void loadDashboardStats()}
+                      disabled={dashLoading}
+                      sx={{ borderRadius: 2, minWidth: 140 }}
+                    >
+                      Yenilə
+                    </Button>
+                  </Stack>
+                </Box>
+
+                {/* Error state */}
+                {dashError && (
+                  <Alert
+                    severity="error"
+                    action={
+                      <Button size="small" color="inherit" onClick={() => void loadDashboardStats()}>
+                        Yenidən cəhd et
+                      </Button>
+                    }
+                    sx={{ borderRadius: '4px' }}
+                  >
+                    {dashError}
+                  </Alert>
+                )}
+
+                {/* Primary KPI cards */}
+                <Box>
+                  <Typography variant="overline" color="text.secondary" fontWeight={600} sx={{ mb: 1.5, display: 'block' }}>
+                    Əsas göstəricilər
+                  </Typography>
+                  <Box
+                    sx={{
+                      display: 'grid',
+                      gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', md: 'repeat(3, 1fr)', lg: 'repeat(5, 1fr)' },
+                      gap: 2
+                    }}
+                  >
+                    {([
+                      { label: 'Sənəd sayı', value: dashStats?.totalDocuments, icon: <DescriptionRounded />, color: '#0057B8', hint: 'Ümumi sənədlər' },
+                      { label: 'Bu gün əlavə edilən', value: dashStats?.insertedDocumentsToday, icon: <AddRounded />, color: '#2e7d32', hint: 'Bugünkü sənədlər' },
+                      { label: 'İndekslənmiş fayllar', value: dashStats?.indexedFileCount, icon: <DoneAllRounded />, color: '#6a1b9a', hint: 'OCR ilə işlənmiş' },
+                      { label: 'Gözləyən hərəkətlər', value: dashStats?.pendingMovementDocumentCount, icon: <CompareArrowsRounded />, color: '#e65100', hint: 'Qəbul gözləyən' },
+                      { label: 'İstifadəçilər', value: dashStats?.totalUsers, icon: <GroupsRounded />, color: '#1565c0', hint: 'Aktiv hesablar' },
+                    ] as Array<{ label: string; value: number | undefined; icon: React.ReactNode; color: string; hint: string }>).map((card) => (
+                      <Card
+                        key={card.label}
+                        sx={{
+                          borderRadius: 2,
+                          border: '1px solid',
+                          borderColor: alpha(card.color, 0.32),
+                          background: `linear-gradient(180deg, ${alpha(card.color, 0.1)} 0%, ${alpha('#ffffff', 0.96)} 65%)`,
+                          transition: 'transform 180ms ease, box-shadow 180ms ease',
+                          '&:hover': {
+                            transform: 'translateY(-2px)',
+                            boxShadow: `0 12px 22px ${alpha(card.color, 0.16)}`
+                          }
+                        }}
+                      >
+                        <CardContent>
+                          {dashLoading && !dashStats ? (
+                            <Stack spacing={1}>
+                              <Skeleton variant="rectangular" height={36} width="55%" />
+                              <Skeleton variant="text" width="80%" />
+                              <Skeleton variant="text" width="50%" />
+                            </Stack>
+                          ) : (
+                            <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1.5 }}>
+                              <Box
+                                sx={{
+                                  color: card.color,
+                                  mt: 0.2,
+                                  flexShrink: 0,
+                                  p: 1,
+                                  borderRadius: 1.5,
+                                  bgcolor: alpha(card.color, 0.14)
+                                }}
+                              >
+                                {card.icon}
+                              </Box>
+                              <Box>
+                                <Typography variant="h4" fontWeight={800} sx={{ color: card.color, lineHeight: 1.1 }}>
+                                  {card.value?.toLocaleString('az-AZ') ?? '—'}
+                                </Typography>
+                                <Typography variant="body2" fontWeight={600} sx={{ mt: 0.5 }}>{card.label}</Typography>
+                                <Typography variant="caption" color="text.secondary">{card.hint}</Typography>
+                              </Box>
+                            </Box>
+                          )}
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </Box>
+                </Box>
+
+                {/* Secondary info cards */}
+                <Box>
+                  <Typography variant="overline" color="text.secondary" fontWeight={600} sx={{ mb: 1.5, display: 'block' }}>
+                    Əlavə məlumatlar
+                  </Typography>
+                  <Box
+                    sx={{
+                      display: 'grid',
+                      gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', md: 'repeat(4, 1fr)' },
+                      gap: 1.5
+                    }}
+                  >
+                    {([
+                      { label: 'Gözləyən emal', value: dashStats?.pendingFileProcessingCount, icon: <AccessTimeRounded />, color: '#f57c00' },
+                      { label: 'Xətalı emal', value: dashStats?.failedFileProcessingCount, icon: <ErrorRounded />, color: '#c62828' },
+                      { label: 'Oxunmamış bildiriş', value: dashStats?.unreadNotificationCount, icon: <NotificationsNoneRounded />, color: '#1565c0' },
+                      { label: 'Arxivlənmiş sənəd', value: dashStats?.archivedDocuments, icon: <ArchiveRounded />, color: '#4e342e' },
+                      { label: 'Aktiv imha dövrü', value: dashStats?.activeDisposalCycleCount, icon: <DeleteRounded />, color: '#880e4f' },
+                      { label: 'Sənəd növü', value: dashStats?.totalDocumentTypes, icon: <FolderSpecialRounded />, color: '#e65100' },
+                      { label: 'Məntiqi yerlər', value: dashStats?.totalLogicalLocations, icon: <StorageRounded />, color: '#283593' },
+                      { label: 'Fiziki yerlər', value: dashStats?.totalPhysicalLocations, icon: <AccountTreeRounded />, color: '#00695c' },
+                    ] as Array<{ label: string; value: number | undefined; icon: React.ReactNode; color: string }>).map((card) => (
+                      <Paper
+                        key={card.label}
+                        variant="outlined"
+                        sx={{
+                          borderRadius: 2,
+                          borderColor: alpha(card.color, 0.28),
+                          bgcolor: alpha(card.color, 0.04)
+                        }}
+                      >
+                        <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
+                          {dashLoading && !dashStats ? (
+                            <Stack spacing={0.5}>
+                              <Skeleton variant="text" width="45%" height={28} />
+                              <Skeleton variant="text" width="70%" />
+                            </Stack>
+                          ) : (
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                              <Box
+                                sx={{
+                                  color: card.color,
+                                  flexShrink: 0,
+                                  p: 0.9,
+                                  borderRadius: 1.25,
+                                  bgcolor: alpha(card.color, 0.16)
+                                }}
+                              >
+                                {card.icon}
+                              </Box>
+                              <Box>
+                                <Typography variant="h6" fontWeight={700} sx={{ color: card.color, lineHeight: 1.1 }}>
+                                  {card.value?.toLocaleString('az-AZ') ?? '—'}
+                                </Typography>
+                                <Typography variant="caption" color="text.secondary">{card.label}</Typography>
+                              </Box>
+                            </Box>
+                          )}
+                        </CardContent>
+                      </Paper>
+                    ))}
+                  </Box>
+                </Box>
+
               </Stack>
             ) : null}
+
 
             {activeSection === 'profile' && sectionAccess.profile ? (
               <Stack spacing={2}>
@@ -1868,7 +2076,9 @@ export function AdminPage() {
                         <TableHead>
                           <TableRow sx={{ bgcolor: 'primary.main' }}>
                             <TableCell sx={{ color: 'white', fontWeight: 700, borderBottom: 'none' }}>İstifadəçi adı</TableCell>
-                            <TableCell sx={{ color: 'white', fontWeight: 700, borderBottom: 'none' }}>Ad Soyad / E-poçt</TableCell>
+                            <TableCell sx={{ color: 'white', fontWeight: 700, borderBottom: 'none' }}>Ad Soyad</TableCell>
+                            <TableCell sx={{ color: 'white', fontWeight: 700, borderBottom: 'none' }}>Telefon</TableCell>
+                            <TableCell sx={{ color: 'white', fontWeight: 700, borderBottom: 'none' }}>Struktur bölməsi</TableCell>
                             <TableCell sx={{ color: 'white', fontWeight: 700, borderBottom: 'none' }}>Status</TableCell>
                             <TableCell sx={{ color: 'white', fontWeight: 700, borderBottom: 'none' }}>Son giriş</TableCell>
                             <TableCell align="right" sx={{ color: 'white', fontWeight: 700, borderBottom: 'none' }}>Əməliyyatlar</TableCell>
@@ -1884,7 +2094,13 @@ export function AdminPage() {
                                   <Typography variant="body2" fontWeight={700}>{user.username}</Typography>
                                 </Stack>
                               </TableCell>
-                              <TableCell><Typography variant="body2" color="text.secondary">{user.fullName || user.email || '—'}</Typography></TableCell>
+                              <TableCell><Typography variant="body2" color="text.secondary">{user.fullName || '—'}</Typography></TableCell>
+                              <TableCell><Typography variant="body2" color="text.secondary">{user.phoneNumber || '—'}</Typography></TableCell>
+                              <TableCell>
+                                <Typography variant="body2" color="text.secondary">
+                                  {user.organizationalStructureName || orgStructureNodes.find((n) => n.id === user.organizationalStructureId)?.name || '—'}
+                                </Typography>
+                              </TableCell>
                               <TableCell>
                                 <Chip color={user.isLocked ? 'warning' : 'success'} label={user.isLocked ? 'Bloklanıb' : 'Aktiv'} size="small" />
                               </TableCell>
@@ -1916,7 +2132,7 @@ export function AdminPage() {
                                       {user.isLocked ? <LockOpenRounded fontSize="small" /> : <LockRounded fontSize="small" />}
                                     </IconButton>
                                   </Tooltip>
-                                  <Tooltip title="Sil"><IconButton size="small" color="error" onClick={() => void runAction(async () => { await api.deleteUser(user.id); await refreshUsers(); }, 'İstifadəçi silindi.')}><DeleteRounded fontSize="small" /></IconButton></Tooltip>
+                                  <Tooltip title="Sil"><IconButton size="small" color="error" onClick={() => openDeleteConfirm('İstifadəçini sil', `${user.username} istifadəçisini silmək istədiyinizə əminsiniz?`, () => runAction(async () => { await api.deleteUser(user.id); await refreshUsers(); }, 'İstifadəçi silindi.'))}><DeleteRounded fontSize="small" /></IconButton></Tooltip>
                                 </Stack>
                               </TableCell>
                             </TableRow>
@@ -2001,7 +2217,7 @@ export function AdminPage() {
                                 <Stack direction="row" spacing={0.5} justifyContent="flex-end">
                                   <Tooltip title="Düzənlə"><IconButton size="small" onClick={() => startEditingRole(role)}><EditRounded fontSize="small" /></IconButton></Tooltip>
                                   <Tooltip title="İcazələr"><IconButton size="small" color="primary" onClick={() => { setSelectedRoleId(role.id); setActiveSection('permissions'); }}><ShieldRounded fontSize="small" /></IconButton></Tooltip>
-                                  <Tooltip title="Sil"><IconButton size="small" color="error" onClick={() => void runAction(async () => { await api.deleteRole(role.id); await refreshRoles(); }, 'Rol silindi.')}><DeleteRounded fontSize="small" /></IconButton></Tooltip>
+                                  <Tooltip title="Sil"><IconButton size="small" color="error" onClick={() => openDeleteConfirm('Rolu sil', `${role.name} rolunu silmək istədiyinizə əminsiniz?`, () => runAction(async () => { await api.deleteRole(role.id); await refreshRoles(); }, 'Rol silindi.'))}><DeleteRounded fontSize="small" /></IconButton></Tooltip>
                                 </Stack>
                               </TableCell>
                             </TableRow>
@@ -2052,7 +2268,7 @@ export function AdminPage() {
                           <AccordionSummary expandIcon={<ExpandMoreRounded />}>
                             <Stack direction="row" spacing={1.5} alignItems="center">
                               <Typography fontWeight={600}>
-                                {controller.actions.find((item) => item.description?.trim())?.description || controller.controllerName}
+                                {controller.description?.trim() || controller.controllerName}
                               </Typography>
                               <Chip label={`${controller.actions.filter((item) => selectedActionIds.has(item.actionId)).length}/${controller.actions.length}`} size="small" />
                             </Stack>
@@ -2066,10 +2282,10 @@ export function AdminPage() {
                                     <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.5} justifyContent="space-between">
                                       <Box>
                                         <Typography fontWeight={600} variant="body2">
-                                          {action.httpMethod} {action.route}
+                                          {action.description || action.actionName}
                                         </Typography>
                                         <Typography color="text.secondary" variant="body2">
-                                          {action.description || action.actionName}
+                                          {action.httpMethod} {action.route}
                                         </Typography>
                                       </Box>
                                       <FormControlLabel
@@ -2279,6 +2495,8 @@ export function AdminPage() {
 
                     <TablePagination
                       component="div"
+                      labelRowsPerPage="Səhifə üzrə sətir sayı:"
+                      labelDisplayedRows={({ from, to, count }) => `${from}–${to} / ${count !== -1 ? count : `>${to}`}`}
                       count={fileProcessingTotal}
                       page={fileProcessingPage}
                       onPageChange={(_, nextPage) => setFileProcessingPage(nextPage)}
@@ -2316,7 +2534,35 @@ export function AdminPage() {
                       <Stack spacing={2}>
                         <TextField label="Ad" value={documentTypeForm.name} onChange={(e) => setDocumentTypeForm((c) => ({ ...c, name: e.target.value }))} required fullWidth />
                         <TextField label="Açıqlama" value={documentTypeForm.description} onChange={(e) => setDocumentTypeForm((c) => ({ ...c, description: e.target.value }))} minRows={2} multiline fullWidth />
-                        <TextField label="Saxlama müddəti (ay)" type="number" value={documentTypeForm.retentionMonth} onChange={(e) => setDocumentTypeForm((c) => ({ ...c, retentionMonth: Number(e.target.value) }))} inputProps={{ min: 1 }} required fullWidth />
+                        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr 1fr' }, gap: 2 }}>
+                          <TextField
+                            label="İndeks"
+                            type="number"
+                            value={documentTypeForm.index}
+                            onChange={(e) => setDocumentTypeForm((c) => ({ ...c, index: Number(e.target.value) }))}
+                            inputProps={{ min: 1 }}
+                            required
+                            fullWidth
+                          />
+                          <TextField
+                            label="Sayğac"
+                            type="number"
+                            value={documentTypeForm.counter}
+                            onChange={(e) => setDocumentTypeForm((c) => ({ ...c, counter: Number(e.target.value) }))}
+                            inputProps={{ min: 0 }}
+                            required
+                            fullWidth
+                          />
+                          <TextField
+                            label="Saxlama müddəti (ay)"
+                            type="number"
+                            value={documentTypeForm.retentionMonth}
+                            onChange={(e) => setDocumentTypeForm((c) => ({ ...c, retentionMonth: Number(e.target.value) }))}
+                            inputProps={{ min: 1 }}
+                            required
+                            fullWidth
+                          />
+                        </Box>
 
                         {/* Embedded references */}
                         <Divider />
@@ -2329,12 +2575,20 @@ export function AdminPage() {
                         </Stack>
 
                         {/* Inline ref edit form */}
-                        <Collapse in={docTypeRefFormOpen}>
+                        <Collapse in={docTypeRefFormOpen} unmountOnExit>
                           <Paper variant="outlined" sx={{ p: 2, borderRadius: 0, bgcolor: 'background.paper' }}>
                             <Stack spacing={2}>
                               <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 2 }}>
                                 <TextField size="small" label="Ad" value={docTypeRefForm.name} onChange={(e) => setDocTypeRefForm((c) => ({ ...c, name: e.target.value }))} required fullWidth />
-                                <TextField size="small" label="Sütun növü" select value={docTypeRefForm.columnType} onChange={(e) => setDocTypeRefForm((c) => ({ ...c, columnType: Number(e.target.value) }))} fullWidth>
+                                <TextField
+                                  size="small"
+                                  label="Sütun növü"
+                                  select
+                                  value={columnTypeOptions.some((o) => o.value === docTypeRefForm.columnType) ? docTypeRefForm.columnType : ''}
+                                  onChange={(e) => setDocTypeRefForm((c) => ({ ...c, columnType: e.target.value === '' ? 0 : Number(e.target.value) }))}
+                                  fullWidth
+                                >
+                                  <MenuItem value="">Seçin</MenuItem>
                                   {columnTypeOptions.map((o) => <MenuItem key={o.value} value={o.value}>{o.label}</MenuItem>)}
                                 </TextField>
                               </Box>
@@ -2386,7 +2640,7 @@ export function AdminPage() {
                                   }}>
                                   {editingDocTypeRefIdx !== null ? 'Yenilə' : 'Əlavə et'}
                                 </Button>
-                                <Button size="small" variant="outlined" sx={{ borderRadius: 0 }} onClick={() => { setDocTypeRefFormOpen(false); setEditingDocTypeRefIdx(null); }}>Ləğv et</Button>
+                                <Button size="small" variant="outlined" sx={{ borderRadius: 0 }} onClick={() => { setDocTypeRefFormOpen(false); setEditingDocTypeRefIdx(null); setDocTypeRefForm(emptyEmbeddedRef()); }}>Ləğv et</Button>
                               </Stack>
                             </Stack>
                           </Paper>
@@ -2466,6 +2720,8 @@ export function AdminPage() {
                             <TableCell sx={{ width: 44, color: 'white', fontWeight: 700, borderBottom: 'none' }} />
                             <TableCell sx={{ color: 'white', fontWeight: 700, borderBottom: 'none' }}>Ad</TableCell>
                             <TableCell sx={{ color: 'white', fontWeight: 700, borderBottom: 'none' }}>Açıqlama</TableCell>
+                            <TableCell sx={{ color: 'white', fontWeight: 700, borderBottom: 'none' }}>İndeks</TableCell>
+                            <TableCell sx={{ color: 'white', fontWeight: 700, borderBottom: 'none' }}>Sayğac</TableCell>
                             <TableCell sx={{ color: 'white', fontWeight: 700, borderBottom: 'none' }}>Saxlama (ay)</TableCell>
                             <TableCell align="right" sx={{ color: 'white', fontWeight: 700, borderBottom: 'none', width: 90 }}>Əməliyyatlar</TableCell>
                           </TableRow>
@@ -2486,16 +2742,18 @@ export function AdminPage() {
                                 </TableCell>
                                 <TableCell><Typography variant="body2" fontWeight={700}>{item.name}</Typography></TableCell>
                                 <TableCell><Typography variant="body2" color="text.secondary">{item.description || '—'}</Typography></TableCell>
+                                <TableCell><Chip label={item.index} size="small" variant="outlined" /></TableCell>
+                                <TableCell><Chip label={item.counter} size="small" variant="outlined" /></TableCell>
                                 <TableCell><Chip label={`${item.retentionMonth} ay`} size="small" icon={<AccessTimeRounded />} /></TableCell>
                                 <TableCell align="right">
                                   <Stack direction="row" spacing={0.5} justifyContent="flex-end">
                                     <Tooltip title="Düzənlə"><IconButton size="small" onClick={() => void startEditingDocumentType(item)}><EditRounded fontSize="small" /></IconButton></Tooltip>
-                                    <Tooltip title="Sil"><IconButton size="small" color="error" onClick={() => void runAction(async () => { await api.deleteDocumentType(item.id); await refreshDocumentTypes(); if (expandedDocTypeId === item.id) setExpandedDocTypeId(null); }, 'Sənəd növü silindi.')}><DeleteRounded fontSize="small" /></IconButton></Tooltip>
+                                    <Tooltip title="Sil"><IconButton size="small" color="error" onClick={() => openDeleteConfirm('Sənəd növünü sil', `${item.name} sənəd növünü silmək istədiyinizə əminsiniz?`, () => runAction(async () => { await api.deleteDocumentType(item.id); await refreshDocumentTypes(); if (expandedDocTypeId === item.id) setExpandedDocTypeId(null); }, 'Sənəd növü silindi.'))}><DeleteRounded fontSize="small" /></IconButton></Tooltip>
                                   </Stack>
                                 </TableCell>
                               </TableRow>
                               <TableRow>
-                                <TableCell colSpan={5} sx={{ p: 0, border: 'none' }}>
+                                <TableCell colSpan={7} sx={{ p: 0, border: 'none' }}>
                                   <Collapse in={expandedDocTypeId === item.id} unmountOnExit>
                                     <Box sx={{ px: 3, py: 2, bgcolor: alpha('#0057B8', 0.02), borderBottom: '1px solid', borderColor: 'divider' }}>
                                       {loadingExpandedRefs ? (
@@ -2674,10 +2932,15 @@ export function AdminPage() {
                                       variant="outlined"
                                       color="default"
                                       onDelete={() =>
-                                        void runAction(async () => {
-                                          await api.deleteBaseDocumentFile(file.id);
-                                          setBaseDocumentFormExistingFiles((current) => current.filter((f) => f.id !== file.id));
-                                        }, 'Fayl silindi.')
+                                        openDeleteConfirm(
+                                          'Faylı sil',
+                                          `${file.fileName} faylını silmək istədiyinizə əminsiniz?`,
+                                          () =>
+                                            runAction(async () => {
+                                              await api.deleteBaseDocumentFile(file.id);
+                                              setBaseDocumentFormExistingFiles((current) => current.filter((f) => f.id !== file.id));
+                                            }, 'Fayl silindi.')
+                                        )
                                       }
                                     />
                                   ))}
@@ -2796,10 +3059,15 @@ export function AdminPage() {
                                             size="small"
                                             color="error"
                                             onClick={() =>
-                                              void runAction(async () => {
-                                                await api.deleteBaseDocument(item.id);
-                                                await refreshBaseDocuments();
-                                              }, 'Qərar sənədi silindi.')
+                                              openDeleteConfirm(
+                                                'Qərar sənədini sil',
+                                                `${item.documentNumber} nömrəli qərar sənədini silmək istədiyinizə əminsiniz?`,
+                                                () =>
+                                                  runAction(async () => {
+                                                    await api.deleteBaseDocument(item.id);
+                                                    await refreshBaseDocuments();
+                                                  }, 'Qərar sənədi silindi.')
+                                              )
                                             }
                                           >
                                             <DeleteRounded fontSize="small" />
@@ -2824,16 +3092,18 @@ export function AdminPage() {
                                             <List disablePadding dense>
                                               {baseDocumentFilesDialog.files.map((file, fileIdx) => {
                                                 const isPdf = file.mimeType === 'application/pdf' || file.fileName.toLowerCase().endsWith('.pdf');
-                                                const isActivePdf = baseDocumentFilesDialog.pdfPreviewFileId === file.id;
+                                                const isImage = isImageFile(file.mimeType, file.fileName);
+                                                const isPreviewable = isPdf || isImage;
+                                                const isActivePreview = baseDocumentFilesDialog.pdfPreviewFileId === file.id;
                                                 return (
                                                   <React.Fragment key={file.id}>
                                                     {fileIdx > 0 && <Divider />}
                                                     <ListItemButton
-                                                      selected={isActivePdf}
+                                                      selected={isActivePreview}
                                                       sx={{ px: 3, py: 1 }}
-                                                      onClick={() => { if (isPdf) void handleBaseDocumentFilePdfPreview(file.id, file.fileName); }}
-                                                      disableRipple={!isPdf}
-                                                      style={{ cursor: isPdf ? 'pointer' : 'default' }}
+                                                      onClick={() => { if (isPreviewable) void handleBaseDocumentFilePreview(file.id, file.fileName); }}
+                                                      disableRipple={!isPreviewable}
+                                                      style={{ cursor: isPreviewable ? 'pointer' : 'default' }}
                                                     >
                                                       <ListItemIcon sx={{ minWidth: 36 }}>
                                                         {isPdf ? <PictureAsPdfRounded color="error" fontSize="small" /> : <InsertDriveFileOutlined color="action" fontSize="small" />}
@@ -2848,9 +3118,9 @@ export function AdminPage() {
                                                         secondary={`${(file.fileSize / 1024).toFixed(1)} KB · ${new Date(file.uploadedDate).toLocaleString()}`}
                                                       />
                                                       <Stack direction="row" spacing={0.5} onClick={(e) => e.stopPropagation()}>
-                                                        {isPdf && (
-                                                          <Tooltip title="PDF-i göstər">
-                                                            <IconButton size="small" color={isActivePdf ? 'error' : 'default'} onClick={() => void handleBaseDocumentFilePdfPreview(file.id, file.fileName)}>
+                                                        {isPreviewable && (
+                                                          <Tooltip title="Öncədən bax">
+                                                            <IconButton size="small" color={isActivePreview ? 'error' : 'default'} onClick={() => void handleBaseDocumentFilePreview(file.id, file.fileName)}>
                                                               <VisibilityRounded fontSize="small" />
                                                             </IconButton>
                                                           </Tooltip>
@@ -2862,7 +3132,7 @@ export function AdminPage() {
                                                         </Tooltip>
                                                       </Stack>
                                                     </ListItemButton>
-                                                    {isActivePdf && baseDocumentFilesDialog.pdfBlobUrl && (
+                                                    {isActivePreview && baseDocumentFilesDialog.pdfBlobUrl && (
                                                       <Box sx={{ borderTop: '1px solid', borderColor: 'divider', height: 520, bgcolor: 'grey.100', display: 'flex', flexDirection: 'column' }}>
                                                         <Stack
                                                           direction="row"
@@ -2894,11 +3164,21 @@ export function AdminPage() {
                                                           </Tooltip>
                                                         </Stack>
                                                         <Box sx={{ flex: 1, overflow: 'auto' }}>
-                                                          <iframe
-                                                            src={baseDocumentFilesDialog.pdfBlobUrl ?? undefined}
-                                                            title={file.fileName}
-                                                            style={{ width: '100%', height: '100%', border: 'none' }}
-                                                          />
+                                                          {isPdf ? (
+                                                            <iframe
+                                                              src={baseDocumentFilesDialog.pdfBlobUrl ?? undefined}
+                                                              title={file.fileName}
+                                                              style={{ width: '100%', height: '100%', border: 'none' }}
+                                                            />
+                                                          ) : (
+                                                            <Box sx={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', p: 2 }}>
+                                                              <img
+                                                                src={baseDocumentFilesDialog.pdfBlobUrl ?? undefined}
+                                                                alt={file.fileName}
+                                                                style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
+                                                              />
+                                                            </Box>
+                                                          )}
                                                         </Box>
                                                       </Box>
                                                     )}
@@ -2941,11 +3221,21 @@ export function AdminPage() {
                                                       </DialogTitle>
                                                       <Divider />
                                                       <DialogContent sx={{ flex: 1, p: 0, display: 'flex' }}>
-                                                        <iframe
-                                                          src={baseDocumentFilesDialog.pdfBlobUrl ?? undefined}
-                                                          title={file.fileName}
-                                                          style={{ width: '100%', height: '100%', border: 'none' }}
-                                                        />
+                                                        {isPdf ? (
+                                                          <iframe
+                                                            src={baseDocumentFilesDialog.pdfBlobUrl ?? undefined}
+                                                            title={file.fileName}
+                                                            style={{ width: '100%', height: '100%', border: 'none' }}
+                                                          />
+                                                        ) : (
+                                                          <Box sx={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', p: 2, bgcolor: 'grey.100' }}>
+                                                            <img
+                                                              src={baseDocumentFilesDialog.pdfBlobUrl ?? undefined}
+                                                              alt={file.fileName}
+                                                              style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
+                                                            />
+                                                          </Box>
+                                                        )}
                                                       </DialogContent>
                                                     </Dialog>
                                                   </React.Fragment>
@@ -2966,6 +3256,8 @@ export function AdminPage() {
 
                       <TablePagination
                         component="div"
+                        labelRowsPerPage="Səhifə üzrə sətir sayı:"
+                        labelDisplayedRows={({ from, to, count }) => `${from}–${to} / ${count !== -1 ? count : `>${to}`}`}
                         count={baseDocumentTotal}
                         page={baseDocumentPage}
                         onPageChange={(_, nextPage) => setBaseDocumentPage(nextPage)}
@@ -3110,6 +3402,15 @@ export function AdminPage() {
       >
         {notice ? <Alert severity={notice.tone}>{notice.message}</Alert> : <span />}
       </Snackbar>
+
+      <ConfirmDialog
+        open={confirmDelete.open}
+        title={confirmDelete.title}
+        message={confirmDelete.message}
+        loading={confirmingDelete}
+        onCancel={() => setConfirmDelete({ open: false, title: '', message: '', onConfirm: null })}
+        onConfirm={() => void handleConfirmDelete()}
+      />
     </Box>
   );
 }

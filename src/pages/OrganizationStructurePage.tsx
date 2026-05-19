@@ -37,6 +37,7 @@ import SaveRounded from '@mui/icons-material/SaveRounded';
 import SearchRounded from '@mui/icons-material/SearchRounded';
 import SubdirectoryArrowRightRounded from '@mui/icons-material/SubdirectoryArrowRightRounded';
 import { api } from '../lib/api';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import type {
   OrgStructureNode,
   CreateOrgStructurePayload,
@@ -165,6 +166,7 @@ function TreeNode({ node, depth, selectedId, onSelect, onEdit, onDelete, onAddCh
                 {node.name}
               </Typography>
             }
+            secondaryTypographyProps={{ component: 'div' }}
             secondary={
               depth === 0 ? (
                 <Chip label={node.typeName} size="small" sx={{ mt: 0.25, height: 18, fontSize: '0.65rem' }} />
@@ -220,6 +222,7 @@ export default function OrganizationStructurePage({ onOpenTypesPage }: Organizat
   const [nodeForm, setNodeForm] = useState<NodeFormState>(emptyNodeForm());
   const [nodeSaving, setNodeSaving] = useState(false);
   const [flatNodes, setFlatNodes] = useState<Array<OrgStructureNode & { depth: number }>>([]);
+  const [deleteTarget, setDeleteTarget] = useState<OrgStructureNode | null>(null);
 
   // ─── load ────────────────────────────────────────────────────────────────────
   const loadAll = async () => {
@@ -457,7 +460,7 @@ export default function OrganizationStructurePage({ onOpenTypesPage }: Organizat
             >
               <AccountTreeRounded fontSize="small" color="primary" />
               <Typography variant="subtitle2" fontWeight={700} sx={{ flex: 1 }}>
-                İyerarxiya
+                Təşkilat strukturu
               </Typography>
               <Button size="small" variant="outlined" onClick={onOpenTypesPage}>
                 Növlər səhifəsi
@@ -511,7 +514,7 @@ export default function OrganizationStructurePage({ onOpenTypesPage }: Organizat
                               </IconButton>
                             </Tooltip>
                             <Tooltip title="Sil">
-                              <IconButton size="small" color="error" onClick={() => handleDeleteNode(n)}>
+                              <IconButton size="small" color="error" onClick={() => setDeleteTarget(n)}>
                                 <DeleteRounded fontSize="small" />
                               </IconButton>
                             </Tooltip>
@@ -568,7 +571,7 @@ export default function OrganizationStructurePage({ onOpenTypesPage }: Organizat
                       selectedId={selectedNode?.id ?? null}
                       onSelect={n => setSelectedNode(n)}
                       onEdit={openEditNode}
-                      onDelete={handleDeleteNode}
+                      onDelete={(node) => setDeleteTarget(node)}
                       onAddChild={openAddNode}
                     />
                   ))}
@@ -622,7 +625,7 @@ export default function OrganizationStructurePage({ onOpenTypesPage }: Organizat
                         size="small"
                         color="error"
                         startIcon={<DeleteRounded />}
-                        onClick={() => handleDeleteNode(selectedNode)}
+                        onClick={() => setDeleteTarget(selectedNode)}
                       >
                         Sil
                       </Button>
@@ -655,6 +658,18 @@ export default function OrganizationStructurePage({ onOpenTypesPage }: Organizat
           {notice?.message}
         </Alert>
       </Snackbar>
+
+      <ConfirmDialog
+        open={Boolean(deleteTarget)}
+        title="Bölməni sil"
+        message={`Bu bölmə silinəcək: ${deleteTarget?.name || ''}`}
+        onCancel={() => setDeleteTarget(null)}
+        onConfirm={() => {
+          if (!deleteTarget) return;
+          void handleDeleteNode(deleteTarget);
+          setDeleteTarget(null);
+        }}
+      />
     </Box>
   );
 }

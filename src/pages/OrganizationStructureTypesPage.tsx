@@ -30,6 +30,7 @@ import SaveRounded from '@mui/icons-material/SaveRounded';
 import ExpandMoreRounded from '@mui/icons-material/ExpandMoreRounded';
 import { alpha, useTheme } from '@mui/material/styles';
 import { api } from '../lib/api';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import type { OrgStructureType } from '../types/api';
 
 type Notice = { tone: 'success' | 'error'; message: string };
@@ -48,12 +49,13 @@ export default function OrganizationStructureTypesPage() {
   const [typeForm, setTypeForm] = useState<TypeFormState>(emptyTypeForm());
   const [editingTypeId, setEditingTypeId] = useState<number | null>(null);
   const [typeSaving, setTypeSaving] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<OrgStructureType | null>(null);
 
   const loadTypes = async () => {
     setLoading(true);
     try {
       const data = await api.getOrgStructureTypes();
-      setTypes(data ?? []);
+      setTypes([...(data ?? [])].sort((a, b) => a.id - b.id));
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Növlər yüklənərkən xəta baş verdi.';
       setNotice({ tone: 'error', message });
@@ -226,7 +228,7 @@ export default function OrganizationStructureTypesPage() {
                           </IconButton>
                         </Tooltip>
                         <Tooltip title="Sil">
-                          <IconButton size="small" color="error" onClick={() => handleDeleteType(type.id)}>
+                          <IconButton size="small" color="error" onClick={() => setDeleteTarget(type)}>
                             <DeleteRounded fontSize="small" />
                           </IconButton>
                         </Tooltip>
@@ -256,6 +258,18 @@ export default function OrganizationStructureTypesPage() {
           {notice?.message}
         </Alert>
       </Snackbar>
+
+      <ConfirmDialog
+        open={Boolean(deleteTarget)}
+        title="Struktur növünü sil"
+        message={`Bu növ silinəcək: ${deleteTarget?.name || ''}`}
+        onCancel={() => setDeleteTarget(null)}
+        onConfirm={() => {
+          if (!deleteTarget) return;
+          void handleDeleteType(deleteTarget.id);
+          setDeleteTarget(null);
+        }}
+      />
     </Box>
   );
 }

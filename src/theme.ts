@@ -37,7 +37,7 @@ export const appTheme = createTheme({
     borderRadius: 14
   },
   typography: {
-    fontFamily: '"Avenir Next", "Manrope", "Segoe UI Variable", sans-serif',
+    fontFamily: '"Noto Serif", "Palatino Linotype", "Times New Roman", serif',
     h1: {
       fontSize: '2.1rem',
       fontWeight: 700,

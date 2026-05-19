@@ -60,6 +60,7 @@ import type {
   UserDocumentTypeAccess,
   User
 } from '../types/api';
+import type { DashboardStats } from '../types/api';
 
 export const AUTH_STORAGE_KEY = 'earchive.auth';
 
@@ -174,7 +175,7 @@ export const api = {
     physicalLocationId,
     createdFrom,
     createdTo
-  }: DocumentSearchParams = {}) => {
+  }: DocumentSearchParams) => {
     const params = new URLSearchParams({
       page: String(page),
       pageSize: String(pageSize),
@@ -507,6 +508,9 @@ export const api = {
       body: JSON.stringify(payload)
     }),
 
+  getDashboardStats: () =>
+    request<DashboardStats>('/api/dashboard/stats'),
+
   getDocumentTypes: () => request<DocumentType[]>('/api/documenttypes'),
 
   getDocumentTypeWithReferences: (id: string) =>
@@ -602,11 +606,6 @@ export const api = {
   deletePhysicalLocation: (id: string) =>
     request<null>(`/api/physical-locations/${id}`, {
       method: 'DELETE'
-    }),
-
-  generatePhysicalLocationQrCode: (id: string) =>
-    request<PhysicalLocation>(`/api/physical-locations/${id}/generate-qr`, {
-      method: 'POST'
     }),
 
   downloadBaseDocumentFile: async (id: string): Promise<{ blob: Blob; fileName: string }> => {

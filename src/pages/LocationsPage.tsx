@@ -39,7 +39,6 @@ import CloseRounded from '@mui/icons-material/CloseRounded';
 import EditRounded from '@mui/icons-material/EditRounded';
 import DeleteRounded from '@mui/icons-material/DeleteRounded';
 import StorageRounded from '@mui/icons-material/StorageRounded';
-import QrCodeRounded from '@mui/icons-material/QrCodeRounded';
 import Container from '@mui/material/Container';
 import { alpha } from '@mui/material/styles';
 import { useAuth } from '../features/auth/AuthProvider';
@@ -75,7 +74,6 @@ type PhysicalLocationForm = {
   logicalLocationId: string;
   totalSpace: number;
   usedSpace: number;
-  barcode: string;
 };
 
 const emptyLogicalForm = (): LogicalLocationForm => ({
@@ -96,8 +94,7 @@ const emptyPhysicalForm = (): PhysicalLocationForm => ({
   name: '',
   logicalLocationId: '',
   totalSpace: 100,
-  usedSpace: 0,
-  barcode: ''
+  usedSpace: 0
 });
 
 const drawerWidth = 360;
@@ -122,7 +119,6 @@ export function LocationsPage() {
   const [orgStructureOptions, setOrgStructureOptions] = useState<Array<{ id: number; name: string; depth: number }>>([]);
 
   const [deleteConfirm, setDeleteConfirm] = useState<{ type: 'logical' | 'physical'; id: string; name: string } | null>(null);
-  const [qrCodeUrl, setQrCodeUrl] = useState<string | null>(null);
 
   const selectMenuProps = {
     PaperProps: {
@@ -259,8 +255,7 @@ export function LocationsPage() {
         name: physicalForm.name,
         logicalLocationId: physicalForm.logicalLocationId || selectedLogicalId!,
         totalSpace: physicalForm.totalSpace,
-        usedSpace: physicalForm.usedSpace,
-        barcode: physicalForm.barcode || null
+        usedSpace: physicalForm.usedSpace
       };
 
       if (physicalForm.id) {
@@ -291,8 +286,7 @@ export function LocationsPage() {
       name: item.name,
       logicalLocationId: item.logicalLocationId,
       totalSpace: item.totalSpace,
-      usedSpace: item.usedSpace,
-      barcode: item.barcode || ''
+      usedSpace: item.usedSpace
     });
     setPhysicalFormOpen(true);
   }
@@ -836,24 +830,15 @@ export function LocationsPage() {
                           {physicalForm.id ? 'Fiziki Yerləşdirmə Düzənlə' : 'Yeni Fiziki Yerləşdirmə'}
                         </Typography>
                         <Stack spacing={1.5}>
-                          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
-                            <TextField
-                              label="Ad"
-                              required
-                              value={physicalForm.name}
-                              onChange={(e) => setPhysicalForm((c) => ({ ...c, name: e.target.value }))}
-                              fullWidth
-                              size="small"
-                              autoFocus
-                            />
-                            <TextField
-                              label="Ştrikh Kodu"
-                              value={physicalForm.barcode}
-                              onChange={(e) => setPhysicalForm((c) => ({ ...c, barcode: e.target.value }))}
-                              fullWidth
-                              size="small"
-                            />
-                          </Stack>
+                          <TextField
+                            label="Ad"
+                            required
+                            value={physicalForm.name}
+                            onChange={(e) => setPhysicalForm((c) => ({ ...c, name: e.target.value }))}
+                            fullWidth
+                            size="small"
+                            autoFocus
+                          />
                           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
                             <TextField
                               label="Ümumi Sahə"
@@ -909,16 +894,9 @@ export function LocationsPage() {
                               return (
                                 <TableRow key={physical.id} hover sx={{ bgcolor: idx % 2 === 0 ? 'background.paper' : alpha(theme.palette.primary.main, 0.02) }}>
                                   <TableCell>
-                                    <Box>
-                                      <Typography variant="body2" fontWeight={600}>
-                                        {physical.name}
-                                      </Typography>
-                                      {physical.barcode && (
-                                        <Typography variant="caption" color="text.secondary">
-                                          {physical.barcode}
-                                        </Typography>
-                                      )}
-                                    </Box>
+                                    <Typography variant="body2" fontWeight={600}>
+                                      {physical.name}
+                                    </Typography>
                                   </TableCell>
                                   <TableCell>
                                     <Typography variant="body2" fontWeight={600}>
@@ -946,17 +924,6 @@ export function LocationsPage() {
                                   </TableCell>
                                   <TableCell align="right">
                                     <Stack direction="row" spacing={0.5} justifyContent="flex-end">
-                                      {physical.qrCode && (
-                                        <Tooltip title="QR Kodu Göstər">
-                                          <IconButton
-                                            size="small"
-                                            onClick={() => setQrCodeUrl(physical.qrCodeImagePath || null)}
-                                            sx={{ borderRadius: 1 }}
-                                          >
-                                            <QrCodeRounded fontSize="small" />
-                                          </IconButton>
-                                        </Tooltip>
-                                      )}
                                       <Tooltip title="Düzənlə">
                                         <IconButton size="small" onClick={() => startEditingPhysical(physical)} sx={{ borderRadius: 1 }}>
                                           <EditRounded fontSize="small" />
@@ -1031,17 +998,6 @@ export function LocationsPage() {
           >
             Sil
           </Button>
-        </DialogActions>
-      </Dialog>
-
-      {/* QR Code Dialog */}
-      <Dialog open={Boolean(qrCodeUrl)} onClose={() => setQrCodeUrl(null)} maxWidth="sm" PaperProps={{ sx: { borderRadius: 2 } }}>
-        <DialogTitle sx={{ fontWeight: 700 }}>QR Kodu</DialogTitle>
-        <DialogContent>
-          {qrCodeUrl && <Box component="img" src={qrCodeUrl} sx={{ width: '100%', mt: 2 }} />}
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setQrCodeUrl(null)}>Bağla</Button>
         </DialogActions>
       </Dialog>
 

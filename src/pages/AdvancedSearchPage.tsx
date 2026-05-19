@@ -55,6 +55,7 @@ type PdfViewState = {
   maximized: boolean;
   blobUrl: string | null;
   fileName: string;
+  isPdf: boolean;
 };
 
 type DetailCache = Record<string, { loading: boolean; data: DocumentDetail | null }>;
@@ -87,7 +88,10 @@ export function AdvancedSearchPage({ setNotice, onGoToDocument }: AdvancedSearch
   const [selectedLogicalLocationId, setSelectedLogicalLocationId] = useState('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [detailCache, setDetailCache] = useState<DetailCache>({});
-  const [pdfView, setPdfView] = useState<PdfViewState>({ open: false, maximized: false, blobUrl: null, fileName: '' });
+  const [pdfView, setPdfView] = useState<PdfViewState>({ open: false, maximized: false, blobUrl: null, fileName: '', isPdf: true });
+
+  const imageExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.svg'];
+  const isImageFileName = (fileName: string) => imageExtensions.some((ext) => fileName.toLowerCase().endsWith(ext));
 
   useEffect(() => {
     let isCancelled = false;
@@ -209,20 +213,20 @@ export function AdvancedSearchPage({ setNotice, onGoToDocument }: AdvancedSearch
     }
   }
 
-  async function handlePdfView(fileId: string, fileName: string) {
+  async function handleFilePreview(fileId: string, fileName: string, isPdf: boolean) {
     try {
       const { blob } = await api.downloadDocumentFile(fileId);
       if (pdfView.blobUrl) URL.revokeObjectURL(pdfView.blobUrl);
       const url = URL.createObjectURL(blob);
-      setPdfView({ open: true, maximized: false, blobUrl: url, fileName });
+      setPdfView({ open: true, maximized: false, blobUrl: url, fileName, isPdf });
     } catch {
-      setNotice({ tone: 'error', message: 'PDF göstərilərkən xəta baş verdi.' });
+      setNotice({ tone: 'error', message: 'Fayl önizləməsi göstərilərkən xəta baş verdi.' });
     }
   }
 
   function closePdf() {
     if (pdfView.blobUrl) URL.revokeObjectURL(pdfView.blobUrl);
-    setPdfView({ open: false, maximized: false, blobUrl: null, fileName: '' });
+    setPdfView({ open: false, maximized: false, blobUrl: null, fileName: '', isPdf: true });
   }
 
 
@@ -505,6 +509,8 @@ export function AdvancedSearchPage({ setNotice, onGoToDocument }: AdvancedSearch
                       {item.fileIds.map((fileId, idx) => {
                         const fileName = item.fileNames[idx] ?? fileId;
                         const isPdf = fileName.toLowerCase().endsWith('.pdf');
+                        const isImage = isImageFileName(fileName);
+                        const isPreviewable = isPdf || isImage;
                         return (
                           <Stack
                             key={fileId}
@@ -530,11 +536,11 @@ export function AdvancedSearchPage({ setNotice, onGoToDocument }: AdvancedSearch
                               </Typography>
                             </Stack>
                             <Stack direction="row" sx={{ borderLeft: '1px solid', borderColor: 'divider' }}>
-                              {isPdf && (
-                                <Tooltip title="PDF-i göstər">
+                              {isPreviewable && (
+                                <Tooltip title="Öncədən bax">
                                   <IconButton
                                     size="small"
-                                    onClick={() => void handlePdfView(fileId, fileName)}
+                                    onClick={() => void handleFilePreview(fileId, fileName, isPdf)}
                                     sx={{ borderRadius: 0, px: 0.75, py: 0.5, '&:hover': { bgcolor: alpha(theme.palette.error.main, 0.08) } }}
                                   >
                                     <VisibilityRounded sx={{ fontSize: 13, color: 'error.main' }} />
@@ -647,6 +653,8 @@ export function AdvancedSearchPage({ setNotice, onGoToDocument }: AdvancedSearch
             <Divider />
             <TablePagination
               component="div"
+              labelRowsPerPage="Səhifə üzrə sətir sayı:"
+              labelDisplayedRows={({ from, to, count }) => `${from}–${to} / ${count !== -1 ? count : `>${to}`}`}
               count={totalCount}
               page={page}
               onPageChange={(_, nextPage) => setPage(nextPage)}
@@ -668,7 +676,7 @@ export function AdvancedSearchPage({ setNotice, onGoToDocument }: AdvancedSearch
       >
         <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', py: 1.5 }}>
           <Stack direction="row" spacing={1} alignItems="center">
-            <PictureAsPdfRounded color="error" sx={{ fontSize: 20 }} />
+            {pdfView.isPdf ? <PictureAsPdfRounded color="error" sx={{ fontSize: 20 }} /> : <InsertDriveFileOutlined color="action" sx={{ fontSize: 20 }} />}
             <Typography variant="subtitle1" fontWeight={600}>{pdfView.fileName}</Typography>
           </Stack>
           <Stack direction="row" spacing={0.5}>
@@ -682,7 +690,13 @@ export function AdvancedSearchPage({ setNotice, onGoToDocument }: AdvancedSearch
         </DialogTitle>
         <Divider />
         <DialogContent sx={{ flex: 1, p: 0, display: 'flex' }}>
-          <iframe src={pdfView.blobUrl ?? undefined} title={pdfView.fileName} style={{ width: '100%', height: '100%', border: 'none' }} />
+          {pdfView.isPdf ? (
+            <iframe src={pdfView.blobUrl ?? undefined} title={pdfView.fileName} style={{ width: '100%', height: '100%', border: 'none' }} />
+          ) : (
+            <Box sx={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', p: 2, bgcolor: 'grey.100' }}>
+              <img src={pdfView.blobUrl ?? undefined} alt={pdfView.fileName} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
+            </Box>
+          )}
         </DialogContent>
       </Dialog>
 
@@ -701,7 +715,7 @@ export function AdvancedSearchPage({ setNotice, onGoToDocument }: AdvancedSearch
             }}
           >
             <Stack direction="row" spacing={1} alignItems="center">
-              <PictureAsPdfRounded sx={{ fontSize: 16, color: 'error.main' }} />
+              {pdfView.isPdf ? <PictureAsPdfRounded sx={{ fontSize: 16, color: 'error.main' }} /> : <InsertDriveFileOutlined sx={{ fontSize: 16, color: 'text.secondary' }} />}
               <Typography variant="body2" fontWeight={600}>{pdfView.fileName}</Typography>
             </Stack>
             <Stack direction="row" spacing={0.5}>
@@ -714,7 +728,13 @@ export function AdvancedSearchPage({ setNotice, onGoToDocument }: AdvancedSearch
             </Stack>
           </Stack>
           <Box sx={{ height: 540 }}>
-            <iframe src={pdfView.blobUrl} title={pdfView.fileName} style={{ width: '100%', height: '100%', border: 'none' }} />
+            {pdfView.isPdf ? (
+              <iframe src={pdfView.blobUrl} title={pdfView.fileName} style={{ width: '100%', height: '100%', border: 'none' }} />
+            ) : (
+              <Box sx={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', p: 2, bgcolor: 'grey.100' }}>
+                <img src={pdfView.blobUrl} alt={pdfView.fileName} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
+              </Box>
+            )}
           </Box>
         </Paper>
       )}

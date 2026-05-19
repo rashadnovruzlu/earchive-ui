@@ -5,6 +5,22 @@ export type ApiResponse<T> = {
   errors: string[];
 };
 
+export type DashboardStats = {
+  totalDocuments: number;
+  insertedDocumentsToday: number;
+  indexedFileCount: number;
+  pendingMovementDocumentCount: number;
+  totalUsers: number;
+  pendingFileProcessingCount: number;
+  failedFileProcessingCount: number;
+  unreadNotificationCount: number;
+  archivedDocuments: number;
+  activeDisposalCycleCount: number;
+  totalDocumentTypes: number;
+  totalLogicalLocations: number;
+  totalPhysicalLocations: number;
+};
+
 export type PagedResult<T> = {
   items: T[];
   totalCount: number;
@@ -132,6 +148,7 @@ export type DocumentFile = {
 
 export type Document = {
   id: string;
+  documentNumber: string;
   baseDocumentId?: string | null;
   baseDocumentNumber?: string | null;
   title: string;
@@ -289,6 +306,7 @@ export type User = {
   phoneNumber?: string | null;
   isLocked: boolean;
   organizationalStructureId?: number | null;
+  organizationalStructureName?: string | null;
   createdDate: string;
   lastLoginDate?: string | null;
   roles: RoleSummary[];
@@ -382,6 +400,7 @@ export type PermissionActionMatrix = {
 export type PermissionControllerMatrix = {
   controllerId: string;
   controllerName: string;
+  description?: string | null;
   actions: PermissionActionMatrix[];
 };
 
@@ -400,12 +419,16 @@ export type DocumentType = {
   id: string;
   name: string;
   description?: string | null;
+  index: number;
+  counter: number;
   retentionMonth: number;
 };
 
 export type DocumentTypePayload = {
   name: string;
   description?: string;
+  index: number;
+  counter: number;
   retentionMonth: number;
 };
 
@@ -431,6 +454,8 @@ export type EmbeddedReferencePayload = {
 export type UpsertDocumentTypePayload = {
   name: string;
   description?: string;
+  index: number;
+  counter: number;
   retentionMonth: number;
   references: EmbeddedReferencePayload[];
 };
@@ -519,9 +544,6 @@ export type PhysicalLocation = {
   totalSpace: number;
   usedSpace: number;
   availableSpace: number;
-  qrCode: string;
-  qrCodeImagePath?: string | null;
-  barcode?: string | null;
 };
 
 export type CreateLogicalLocationPayload = {
@@ -542,7 +564,6 @@ export type CreatePhysicalLocationPayload = {
   name: string;
   logicalLocationId: string;
   totalSpace: number;
-  barcode?: string | null;
 };
 
 export type UpdatePhysicalLocationPayload = {
@@ -550,7 +571,6 @@ export type UpdatePhysicalLocationPayload = {
   logicalLocationId: string;
   totalSpace: number;
   usedSpace: number;
-  barcode?: string | null;
 };
 
 export type OrgStructureType = {

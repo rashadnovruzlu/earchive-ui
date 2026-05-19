@@ -60,12 +60,14 @@ import type {
   DocumentMovement,
   DocumentType,
   LogicalLocation,
+  OrgStructureNode,
   PhysicalLocation,
   ReferenceRecord,
   SetReferenceValuePayload
 } from '../types/api';
 import { api } from '../lib/api';
 import { useAuth } from '../features/auth/AuthProvider';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 
 type Notice = {
   tone: 'success' | 'error';
@@ -108,6 +110,30 @@ type DocumentFileUploadState = {
 type MovementFormState = {
   organizationalStructureId: number | '';
   notes: string;
+};
+
+const imageMimeTypes = new Set([
+  'image/jpeg',
+  'image/jpg',
+  'image/png',
+  'image/webp',
+  'image/gif',
+  'image/bmp',
+  'image/svg+xml'
+]);
+
+const imageExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.svg'];
+
+function isImageFile(mimeType: string, fileName: string) {
+  const lowerName = fileName.toLowerCase();
+  return imageMimeTypes.has(mimeType.toLowerCase()) || imageExtensions.some((ext) => lowerName.endsWith(ext));
+}
+
+type ConfirmDeleteState = {
+  open: boolean;
+  title: string;
+  message: string;
+  onConfirm: (() => Promise<void>) | null;
 };
 
 type LogicalLocationOption = {
@@ -198,6 +224,7 @@ export function DocumentsPage({
 
   const [documentFormOpen, setDocumentFormOpen] = useState(false);
   const [documentForm, setDocumentForm] = useState<DocumentFormState>(emptyDocumentForm);
+  const [documentSubmitLoading, setDocumentSubmitLoading] = useState(false);
   const [documentFormUpload, setDocumentFormUpload] = useState<DocumentFileUploadState>({ files: [], isOriginal: true });
   const [documentFormExistingFiles, setDocumentFormExistingFiles] = useState<DocumentFile[]>([]);
   const [movementFormOpen, setMovementFormOpen] = useState(false);
@@ -221,6 +248,28 @@ export function DocumentsPage({
     pdfBlobUrl: null,
     pdfMaximized: false
   });
+  const [confirmDelete, setConfirmDelete] = useState<ConfirmDeleteState>({
+    open: false,
+    title: '',
+    message: '',
+    onConfirm: null
+  });
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+
+  const openDeleteConfirm = (title: string, message: string, onConfirm: () => Promise<void>) => {
+    setConfirmDelete({ open: true, title, message, onConfirm });
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!confirmDelete.onConfirm) return;
+    setConfirmingDelete(true);
+    try {
+      await confirmDelete.onConfirm();
+    } finally {
+      setConfirmingDelete(false);
+      setConfirmDelete({ open: false, title: '', message: '', onConfirm: null });
+    }
+  };
 
   const selectedDocumentTypeName = useMemo(
     () => documentTypes.find((item) => item.id === documentForm.documentTypeId)?.name || '',
@@ -545,50 +594,56 @@ export function DocumentsPage({
       return;
     }
 
-    await runAction(async () => {
-      const references = getReferencePayloads();
+    setDocumentSubmitLoading(true);
 
-      if (documentForm.id) {
-        const updated = await api.updateDocument(documentForm.id, {
-          title: documentForm.title,
-          baseDocumentId: documentForm.baseDocumentId || null,
-          physicalLocationId: documentForm.physicalLocationId || null,
-          expirationDate: documentForm.expirationDate || null,
-          references
-        });
+    try {
+      await runAction(async () => {
+        const references = getReferencePayloads();
 
-        if (documentFormUpload.files.length > 0) {
-          for (const file of documentFormUpload.files) {
-            await api.uploadDocumentFile(updated.id, file, documentFormUpload.isOriginal);
+        if (documentForm.id) {
+          const updated = await api.updateDocument(documentForm.id, {
+            title: documentForm.title,
+            baseDocumentId: documentForm.baseDocumentId || null,
+            physicalLocationId: documentForm.physicalLocationId || null,
+            expirationDate: documentForm.expirationDate || null,
+            references
+          });
+
+          if (documentFormUpload.files.length > 0) {
+            for (const file of documentFormUpload.files) {
+              await api.uploadDocumentFile(updated.id, file, documentFormUpload.isOriginal);
+            }
+          }
+        } else {
+          const created = await api.createDocument({
+            title: documentForm.title,
+            documentTypeId: documentForm.documentTypeId,
+            baseDocumentId: documentForm.baseDocumentId || null,
+            physicalLocationId: documentForm.physicalLocationId || null,
+            expirationDate: documentForm.expirationDate || null,
+            references
+          });
+
+          if (documentFormUpload.files.length > 0) {
+            for (const file of documentFormUpload.files) {
+              await api.uploadDocumentFile(created.id, file, documentFormUpload.isOriginal);
+            }
           }
         }
-      } else {
-        const created = await api.createDocument({
-          title: documentForm.title,
-          documentTypeId: documentForm.documentTypeId,
-          baseDocumentId: documentForm.baseDocumentId || null,
-          physicalLocationId: documentForm.physicalLocationId || null,
-          expirationDate: documentForm.expirationDate || null,
-          references
-        });
 
-        if (documentFormUpload.files.length > 0) {
-          for (const file of documentFormUpload.files) {
-            await api.uploadDocumentFile(created.id, file, documentFormUpload.isOriginal);
-          }
-        }
-      }
-
-      setDocumentForm(emptyDocumentForm());
-      setDocumentFormUpload({ files: [], isOriginal: true });
-      setDocumentFormExistingFiles([]);
-      setBaseDocumentSearchInput('');
-      setBaseDocumentPage(1);
-      setBaseDocumentLastSearchQuery('');
-      setReferenceDefinitions([]);
-      setDocumentFormOpen(false);
-      await refreshDocuments();
-    }, documentForm.id ? 'Sənəd yeniləndi.' : 'Sənəd və faylları yaradıldı.');
+        setDocumentForm(emptyDocumentForm());
+        setDocumentFormUpload({ files: [], isOriginal: true });
+        setDocumentFormExistingFiles([]);
+        setBaseDocumentSearchInput('');
+        setBaseDocumentPage(1);
+        setBaseDocumentLastSearchQuery('');
+        setReferenceDefinitions([]);
+        setDocumentFormOpen(false);
+        await refreshDocuments();
+      }, documentForm.id ? 'Sənəd yeniləndi.' : 'Sənəd və faylları yaradıldı.');
+    } finally {
+      setDocumentSubmitLoading(false);
+    }
   }
 
   async function startEditingDocument(item: Document) {
@@ -659,7 +714,7 @@ export function DocumentsPage({
     }
   }
 
-  async function handleDocumentFilePdfPreview(fileId: string) {
+  async function handleDocumentFilePreview(fileId: string) {
     try {
       const { blob } = await api.downloadDocumentFile(fileId);
       const url = URL.createObjectURL(blob);
@@ -669,7 +724,7 @@ export function DocumentsPage({
         return { ...current, pdfPreviewFileId: fileId, pdfBlobUrl: url };
       });
     } catch {
-      setNotice({ tone: 'error', message: 'PDF göstərilərkən xəta baş verdi.' });
+      setNotice({ tone: 'error', message: 'Fayl önizləməsi göstərilərkən xəta baş verdi.' });
     }
   }
 
@@ -827,6 +882,26 @@ export function DocumentsPage({
                   onChange={(_, nextValue) => setDocumentForm((current) => ({ ...current, physicalLocationId: nextValue?.id || '' }))}
                   getOptionLabel={(option) => `${option.name}${option.logicalPath ? ` · ${option.logicalPath}` : ''}`}
                   isOptionEqualToValue={(option, value) => option.id === value.id}
+                  componentsProps={{
+                    paper: {
+                      sx: {
+                        border: '1px solid',
+                        borderColor: 'divider',
+                        boxShadow: '0 10px 24px rgba(0, 0, 0, 0.16)'
+                      }
+                    },
+                    popper: {
+                      sx: {
+                        '& .MuiAutocomplete-option': {
+                          borderBottom: '1px solid',
+                          borderColor: 'divider'
+                        },
+                        '& .MuiAutocomplete-option:last-of-type': {
+                          borderBottom: 'none'
+                        }
+                      }
+                    }
+                  }}
                   renderOption={(props, option) => (
                     <li {...props} key={option.id}>
                       <Stack spacing={0.25}>
@@ -951,10 +1026,15 @@ export function DocumentsPage({
                             variant="outlined"
                             color="default"
                             onDelete={() =>
-                              void runAction(async () => {
-                                await api.deleteDocumentFile(file.id);
-                                setDocumentFormExistingFiles((current) => current.filter((f) => f.id !== file.id));
-                              }, 'Fayl silindi.')
+                              openDeleteConfirm(
+                                'Faylı sil',
+                                `${file.fileName} faylını silmək istədiyinizə əminsiniz?`,
+                                () =>
+                                  runAction(async () => {
+                                    await api.deleteDocumentFile(file.id);
+                                    setDocumentFormExistingFiles((current) => current.filter((f) => f.id !== file.id));
+                                  }, 'Fayl silindi.')
+                              )
                             }
                           />
                         ))}
@@ -965,12 +1045,18 @@ export function DocumentsPage({
               </Box>
 
               <Stack direction="row" spacing={1}>
-                <Button disabled={isBusy} type="submit" variant="contained" startIcon={documentForm.id ? <EditRounded /> : <AddRounded />}>
-                  {documentForm.id ? 'Yenilə' : 'Yarat'}
+                <Button
+                  disabled={isBusy || documentSubmitLoading}
+                  type="submit"
+                  variant="contained"
+                  startIcon={documentSubmitLoading ? <CircularProgress size={16} color="inherit" /> : documentForm.id ? <EditRounded /> : <AddRounded />}
+                >
+                  {documentSubmitLoading ? (documentForm.id ? 'Yenilənir...' : 'Yaradılır...') : (documentForm.id ? 'Yenilə' : 'Yarat')}
                 </Button>
 
                 <Button
                   variant="outlined"
+                  disabled={isBusy || documentSubmitLoading}
                   onClick={() => {
                     setDocumentForm(emptyDocumentForm());
                     setDocumentFormUpload({ files: [], isOriginal: true });
@@ -1071,6 +1157,7 @@ export function DocumentsPage({
               <Table size="small">
                 <TableHead>
                   <TableRow sx={{ bgcolor: 'primary.main' }}>
+                    <TableCell sx={{ color: 'white', fontWeight: 700, borderBottom: 'none' }}>Sənəd nömrəsi</TableCell>
                     <TableCell sx={{ color: 'white', fontWeight: 700, borderBottom: 'none' }}>Başlıq</TableCell>
                     <TableCell sx={{ color: 'white', fontWeight: 700, borderBottom: 'none' }}>Sənəd növü</TableCell>
                     <TableCell sx={{ color: 'white', fontWeight: 700, borderBottom: 'none' }}>Məntiqi yerləşdirmə</TableCell>
@@ -1098,6 +1185,9 @@ export function DocumentsPage({
                             '& .MuiTableCell-root': { borderBottomColor: isFilesExpanded ? 'transparent' : alpha('#0057B8', 0.12) }
                           }}
                         >
+                          <TableCell>
+                            <Typography variant="body2" fontWeight={700}>{item.documentNumber || '—'}</Typography>
+                          </TableCell>
                           <TableCell>
                             <Typography variant="body2" fontWeight={700}>{item.title}</Typography>
                             <Typography variant="caption" color="text.secondary">{new Date(item.createdDate).toLocaleString()}</Typography>
@@ -1151,10 +1241,15 @@ export function DocumentsPage({
                                   size="small"
                                   color="error"
                                   onClick={() =>
-                                    void runAction(async () => {
-                                      await api.deleteDocument(item.id);
-                                      await refreshDocuments();
-                                    }, 'Sənəd silindi.')
+                                    openDeleteConfirm(
+                                      'Sənədi sil',
+                                      `${item.title} sənədini silmək istədiyinizə əminsiniz?`,
+                                      () =>
+                                        runAction(async () => {
+                                          await api.deleteDocument(item.id);
+                                          await refreshDocuments();
+                                        }, 'Sənəd silindi.')
+                                    )
                                   }
                                 >
                                   <DeleteRounded fontSize="small" />
@@ -1165,7 +1260,7 @@ export function DocumentsPage({
                         </TableRow>
 
                         <TableRow>
-                          <TableCell colSpan={9} sx={{ p: 0, borderBottom: isMovementExpanded ? `1px solid ${alpha('#0057B8', 0.12)}` : 'none' }}>
+                          <TableCell colSpan={10} sx={{ p: 0, borderBottom: isMovementExpanded ? `1px solid ${alpha('#0057B8', 0.12)}` : 'none' }}>
                             <Collapse in={isMovementExpanded} timeout="auto" unmountOnExit>
                               <Box sx={{ bgcolor: alpha('#0057B8', 0.02), borderTop: '1px solid', borderColor: alpha('#0057B8', 0.12), p: 2 }}>
                                 <Stack spacing={2}>
@@ -1271,6 +1366,7 @@ export function DocumentsPage({
                                               <TableCell>Verilmə tarixi</TableCell>
                                               <TableCell>Haradan</TableCell>
                                               <TableCell>Hara</TableCell>
+                                              <TableCell>Təşkilat bölməsi</TableCell>
                                               <TableCell>Verən</TableCell>
                                               <TableCell>Qəbul edən</TableCell>
                                               <TableCell>Status</TableCell>
@@ -1283,6 +1379,7 @@ export function DocumentsPage({
                                                 <TableCell>{new Date(row.givingDate).toLocaleString()}</TableCell>
                                                 <TableCell>{row.fromLocationName || '—'}</TableCell>
                                                 <TableCell>{row.toLocationName}</TableCell>
+                                                <TableCell>{orgStructureNodes.find((n) => n.id === row.organizationalStructureId)?.name || '—'}</TableCell>
                                                 <TableCell>{row.movedByUsername || '—'}</TableCell>
                                                 <TableCell>{row.receivedByUsername || '—'}</TableCell>
                                                 <TableCell>
@@ -1299,10 +1396,15 @@ export function DocumentsPage({
                                                         size="small"
                                                         color="error"
                                                         onClick={() =>
-                                                          void runAction(async () => {
-                                                            await api.deleteDocumentMovement(row.id);
-                                                            await loadMovementHistory(item.id);
-                                                          }, 'Qəbul edilməmiş hərəkət silindi.')
+                                                          openDeleteConfirm(
+                                                            'Hərəkəti sil',
+                                                            'Qəbul edilməmiş sənəd hərəkətini silmək istədiyinizə əminsiniz?',
+                                                            () =>
+                                                              runAction(async () => {
+                                                                await api.deleteDocumentMovement(row.id);
+                                                                await loadMovementHistory(item.id);
+                                                              }, 'Qəbul edilməmiş hərəkət silindi.')
+                                                          )
                                                         }
                                                       >
                                                         <DeleteRounded fontSize="small" />
@@ -1326,7 +1428,7 @@ export function DocumentsPage({
                         </TableRow>
 
                         <TableRow>
-                          <TableCell colSpan={8} sx={{ p: 0, borderBottom: isFilesExpanded ? `1px solid ${alpha('#0057B8', 0.12)}` : 'none' }}>
+                          <TableCell colSpan={9} sx={{ p: 0, borderBottom: isFilesExpanded ? `1px solid ${alpha('#0057B8', 0.12)}` : 'none' }}>
                             <Collapse in={isFilesExpanded} timeout="auto" unmountOnExit>
                               <Box sx={{ bgcolor: alpha('#0057B8', 0.02), borderTop: '1px solid', borderColor: alpha('#0057B8', 0.12) }}>
                                 {filesDialog.isLoading ? (
@@ -1341,19 +1443,21 @@ export function DocumentsPage({
                                   <List disablePadding dense>
                                     {filesDialog.files.map((file, fileIndex) => {
                                       const isPdf = file.mimeType === 'application/pdf' || file.fileName.toLowerCase().endsWith('.pdf');
-                                      const isActivePdf = filesDialog.pdfPreviewFileId === file.id;
+                                      const isImage = isImageFile(file.mimeType, file.fileName);
+                                      const isPreviewable = isPdf || isImage;
+                                      const isActivePreview = filesDialog.pdfPreviewFileId === file.id;
 
                                       return (
                                         <React.Fragment key={file.id}>
                                           {fileIndex > 0 ? <Divider /> : null}
                                           <ListItemButton
-                                            selected={isActivePdf}
+                                            selected={isActivePreview}
                                             sx={{ px: 3, py: 1 }}
                                             onClick={() => {
-                                              if (isPdf) void handleDocumentFilePdfPreview(file.id);
+                                              if (isPreviewable) void handleDocumentFilePreview(file.id);
                                             }}
-                                            disableRipple={!isPdf}
-                                            style={{ cursor: isPdf ? 'pointer' : 'default' }}
+                                            disableRipple={!isPreviewable}
+                                            style={{ cursor: isPreviewable ? 'pointer' : 'default' }}
                                           >
                                             <ListItemIcon sx={{ minWidth: 36 }}>
                                               {isPdf ? <PictureAsPdfRounded color="error" fontSize="small" /> : <InsertDriveFileOutlined color="action" fontSize="small" />}
@@ -1369,9 +1473,9 @@ export function DocumentsPage({
                                             />
 
                                             <Stack direction="row" spacing={0.5} onClick={(event) => event.stopPropagation()}>
-                                              {isPdf ? (
-                                                <Tooltip title="PDF-i göstər">
-                                                  <IconButton size="small" color={isActivePdf ? 'error' : 'default'} onClick={() => void handleDocumentFilePdfPreview(file.id)}>
+                                              {isPreviewable ? (
+                                                <Tooltip title="Öncədən bax">
+                                                  <IconButton size="small" color={isActivePreview ? 'error' : 'default'} onClick={() => void handleDocumentFilePreview(file.id)}>
                                                     <VisibilityRounded fontSize="small" />
                                                   </IconButton>
                                                 </Tooltip>
@@ -1385,7 +1489,7 @@ export function DocumentsPage({
                                             </Stack>
                                           </ListItemButton>
 
-                                          {isActivePdf && filesDialog.pdfBlobUrl ? (
+                                          {isActivePreview && filesDialog.pdfBlobUrl ? (
                                             <Box sx={{ borderTop: '1px solid', borderColor: 'divider', height: 520, bgcolor: 'grey.100', display: 'flex', flexDirection: 'column' }}>
                                               <Stack
                                                 direction="row"
@@ -1417,11 +1521,21 @@ export function DocumentsPage({
                                                 </Tooltip>
                                               </Stack>
                                               <Box sx={{ flex: 1, overflow: 'auto' }}>
-                                                <iframe
-                                                  src={filesDialog.pdfBlobUrl ?? undefined}
-                                                  title={file.fileName}
-                                                  style={{ width: '100%', height: '100%', border: 'none' }}
-                                                />
+                                                {isPdf ? (
+                                                  <iframe
+                                                    src={filesDialog.pdfBlobUrl ?? undefined}
+                                                    title={file.fileName}
+                                                    style={{ width: '100%', height: '100%', border: 'none' }}
+                                                  />
+                                                ) : (
+                                                  <Box sx={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', p: 2 }}>
+                                                    <img
+                                                      src={filesDialog.pdfBlobUrl ?? undefined}
+                                                      alt={file.fileName}
+                                                      style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
+                                                    />
+                                                  </Box>
+                                                )}
                                               </Box>
                                             </Box>
                                           ) : null}
@@ -1464,11 +1578,21 @@ export function DocumentsPage({
                                             </DialogTitle>
                                             <Divider />
                                             <DialogContent sx={{ flex: 1, p: 0, display: 'flex' }}>
-                                              <iframe
-                                                src={filesDialog.pdfBlobUrl ?? undefined}
-                                                title={file.fileName}
-                                                style={{ width: '100%', height: '100%', border: 'none' }}
-                                              />
+                                              {isPdf ? (
+                                                <iframe
+                                                  src={filesDialog.pdfBlobUrl ?? undefined}
+                                                  title={file.fileName}
+                                                  style={{ width: '100%', height: '100%', border: 'none' }}
+                                                />
+                                              ) : (
+                                                <Box sx={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', p: 2, bgcolor: 'grey.100' }}>
+                                                  <img
+                                                    src={filesDialog.pdfBlobUrl ?? undefined}
+                                                    alt={file.fileName}
+                                                    style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
+                                                  />
+                                                </Box>
+                                              )}
                                             </DialogContent>
                                           </Dialog>
                                         </React.Fragment>
@@ -1489,6 +1613,8 @@ export function DocumentsPage({
 
             <TablePagination
               component="div"
+              labelRowsPerPage="Səhifə üzrə sətir sayı:"
+              labelDisplayedRows={({ from, to, count }) => `${from}–${to} / ${count !== -1 ? count : `>${to}`}`}
               count={documentsTotal}
               page={documentPage}
               onPageChange={(_, nextPage) => setDocumentPage(nextPage)}
@@ -1528,6 +1654,26 @@ export function DocumentsPage({
               }
               getOptionLabel={(option) => `${option.name}${option.logicalPath ? ` · ${option.logicalPath}` : ''}`}
               isOptionEqualToValue={(option, value) => option.id === value.id}
+              componentsProps={{
+                paper: {
+                  sx: {
+                    border: '1px solid',
+                    borderColor: 'divider',
+                    boxShadow: '0 10px 24px rgba(0, 0, 0, 0.16)'
+                  }
+                },
+                popper: {
+                  sx: {
+                    '& .MuiAutocomplete-option': {
+                      borderBottom: '1px solid',
+                      borderColor: 'divider'
+                    },
+                    '& .MuiAutocomplete-option:last-of-type': {
+                      borderBottom: 'none'
+                    }
+                  }
+                }
+              }}
               renderOption={(props, option) => (
                 <li {...props} key={option.id}>
                   <Stack spacing={0.25}>
@@ -1568,6 +1714,15 @@ export function DocumentsPage({
           </Button>
         </DialogActions>
       </Dialog>
+
+      <ConfirmDialog
+        open={confirmDelete.open}
+        title={confirmDelete.title}
+        message={confirmDelete.message}
+        loading={confirmingDelete}
+        onCancel={() => setConfirmDelete({ open: false, title: '', message: '', onConfirm: null })}
+        onConfirm={() => void handleConfirmDelete()}
+      />
     </Stack>
   );
 }
