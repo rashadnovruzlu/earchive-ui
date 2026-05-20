@@ -179,7 +179,15 @@ export type AdvancedDocumentSearchResult = {
   title: string;
   fileIds: string[];
   fileNames: string[];
+  highlights: string[];
+  fileHighlights?: AdvancedDocumentFileHighlight[];
   score: number;
+};
+
+export type AdvancedDocumentFileHighlight = {
+  fileId: string;
+  fileName: string;
+  highlights: string[];
 };
 
 export type DocumentSearchParams = {

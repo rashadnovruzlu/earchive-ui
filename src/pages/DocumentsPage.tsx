@@ -1,8 +1,9 @@
-import React, { useEffect, useMemo, useState, type FormEvent } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import {
   Accordion,
   AccordionDetails,
   AccordionSummary,
+  Alert,
   Autocomplete,
   Box,
   Button,
@@ -18,6 +19,7 @@ import {
   FormControl,
   IconButton,
   InputLabel,
+  LinearProgress,
   List,
   ListItemButton,
   ListItemIcon,
@@ -41,6 +43,10 @@ import { alpha } from '@mui/material/styles';
 import ExpandMoreRounded from '@mui/icons-material/ExpandMoreRounded';
 import TopicRounded from '@mui/icons-material/TopicRounded';
 import AddRounded from '@mui/icons-material/AddRounded';
+import DocumentScannerRounded from '@mui/icons-material/DocumentScannerRounded';
+import ScannerRounded from '@mui/icons-material/ScannerRounded';
+import ErrorOutlineRounded from '@mui/icons-material/ErrorOutlineRounded';
+import CheckCircleOutlineRounded from '@mui/icons-material/CheckCircleOutlineRounded';
 import EditRounded from '@mui/icons-material/EditRounded';
 import DeleteRounded from '@mui/icons-material/DeleteRounded';
 import ArchiveRounded from '@mui/icons-material/ArchiveRounded';
@@ -123,6 +129,126 @@ const imageMimeTypes = new Set([
 ]);
 
 const imageExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.svg'];
+
+const dwtScriptUrl = 'https://cdn.jsdelivr.net/npm/dwt@19.3.3/dist/dynamsoft.webtwain.min.js';
+const dwtDefaultResourcesPath = 'https://cdn.jsdelivr.net/npm/dwt@19.3.3/dist';
+const dwtDefaultServiceInstallerLocation = 'https://unpkg.com/dwt@19.3.3/dist/dist/';
+const dwtInstanceId = 'documents-page-dwt-instance';
+const dwtDemoProductKey = 'DLS2eyJvcmdhbml6YXRpb25JRCI6IjIwMDAwMSJ9';
+const dwtReadyTimeoutMs = 8000;
+
+let dwtReadyPromise: Promise<any> | null = null;
+
+function getDynamsoftNamespace() {
+  return (window as Window & { Dynamsoft?: any }).Dynamsoft;
+}
+
+function loadDwtScript() {
+  return new Promise<void>((resolve, reject) => {
+    if (typeof document === 'undefined') {
+      reject(new Error('Brauzer mühiti mövcud deyil.'));
+      return;
+    }
+
+    const existingScript = document.querySelector<HTMLScriptElement>(`script[src="${dwtScriptUrl}"]`);
+    if (existingScript) {
+      if ((window as Window & { Dynamsoft?: any }).Dynamsoft?.DWT) {
+        resolve();
+        return;
+      }
+
+      existingScript.addEventListener('load', () => resolve(), { once: true });
+      existingScript.addEventListener('error', () => reject(new Error('Dynamsoft Web TWAIN skripti yüklənmədi.')), { once: true });
+      return;
+    }
+
+    const script = document.createElement('script');
+    script.src = dwtScriptUrl;
+    script.async = true;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error('Dynamsoft Web TWAIN skripti yüklənmədi.'));
+    document.head.appendChild(script);
+  });
+}
+
+async function ensureDwtInstance(productKey: string) {
+  if (dwtReadyPromise) {
+    return dwtReadyPromise;
+  }
+
+  dwtReadyPromise = new Promise<any>(async (resolve, reject) => {
+    try {
+      await loadDwtScript();
+
+      const dynamsoft = getDynamsoftNamespace();
+      const dwt = dynamsoft?.DWT;
+
+      if (!dwt) {
+        throw new Error('Dynamsoft Web TWAIN başlatıla bilmədi.');
+      }
+
+      dwt.ResourcesPath = import.meta.env.VITE_DWT_RESOURCES_PATH || dwtDefaultResourcesPath;
+      dwt.ServiceInstallerLocation = import.meta.env.VITE_DWT_SERVICE_INSTALLER_LOCATION || dwtDefaultServiceInstallerLocation;
+      dwt.ProductKey = productKey;
+      dwt.AutoLoad = false;
+      dwt.Containers = [];
+      dwt.UseDefaultViewer = false;
+      dwt.IfCheckCORS = true;
+
+      const existingInstance = dwt.GetWebTwain?.(dwtInstanceId);
+      if (existingInstance) {
+        resolve(existingInstance);
+        return;
+      }
+
+      const timeoutId = window.setTimeout(() => {
+        dwtReadyPromise = null;
+        reject(new Error('Web TWAIN xidməti tapılmadı. Səhifə işləməyə davam edir, amma skan üçün Dynamsoft servisinin quraşdırılması tələb olunur.'));
+      }, dwtReadyTimeoutMs);
+
+      dwt.CreateDWTObjectEx(
+        {
+          WebTwainId: dwtInstanceId
+        },
+        (instance: any) => {
+          window.clearTimeout(timeoutId);
+          resolve(instance);
+        },
+        (error: { code?: number; message?: string }) => {
+          window.clearTimeout(timeoutId);
+          dwtReadyPromise = null;
+          reject(new Error(error?.message || 'Web TWAIN xidməti başladılmadı.'));
+        }
+      );
+    } catch (error) {
+      dwtReadyPromise = null;
+      reject(error);
+    }
+  });
+
+  return dwtReadyPromise;
+}
+
+function convertScannedPagesToPdfFile(webTwain: any, imageTypeEnum: any, startIndex: number) {
+  const totalImages = Number(webTwain.HowManyImagesInBuffer ?? 0);
+  const indices = Array.from({ length: Math.max(0, totalImages - startIndex) }, (_, index) => startIndex + index);
+
+  if (indices.length === 0) {
+    return Promise.reject(new Error('Heç bir səhifə skan edilmədi.'));
+  }
+
+  return new Promise<File>((resolve, reject) => {
+    webTwain.ConvertToBlob(
+      indices,
+      imageTypeEnum.IT_PDF,
+      (blob: Blob) => {
+        const fileName = `scan-${new Date().toISOString().replace(/[:.]/g, '-')}.pdf`;
+        resolve(new File([blob], fileName, { type: 'application/pdf', lastModified: Date.now() }));
+      },
+      (_errorCode: number, errorString: string) => reject(new Error(errorString || 'Skan edilmiş fayl PDF-ə çevrilmədi.'))
+    );
+  });
+}
 
 function isImageFile(mimeType: string, fileName: string) {
   const lowerName = fileName.toLowerCase();
@@ -226,6 +352,12 @@ export function DocumentsPage({
   const [documentForm, setDocumentForm] = useState<DocumentFormState>(emptyDocumentForm);
   const [documentSubmitLoading, setDocumentSubmitLoading] = useState(false);
   const [documentFormUpload, setDocumentFormUpload] = useState<DocumentFileUploadState>({ files: [], isOriginal: true });
+  const [documentScanLoading, setDocumentScanLoading] = useState(false);
+  const [scanDialogOpen, setScanDialogOpen] = useState(false);
+  const [scanDialogStatus, setScanDialogStatus] = useState<'idle' | 'connecting' | 'ready' | 'scanning' | 'done' | 'error'>('idle');
+  const [scanDialogError, setScanDialogError] = useState<string | null>(null);
+  const [scanDialogPageCount, setScanDialogPageCount] = useState(0);
+  const dwtRef = useRef<any>(null);
   const [documentFormExistingFiles, setDocumentFormExistingFiles] = useState<DocumentFile[]>([]);
   const [movementFormOpen, setMovementFormOpen] = useState(false);
   const [movementTargetDocument, setMovementTargetDocument] = useState<Document | null>(null);
@@ -259,6 +391,76 @@ export function DocumentsPage({
   const openDeleteConfirm = (title: string, message: string, onConfirm: () => Promise<void>) => {
     setConfirmDelete({ open: true, title, message, onConfirm });
   };
+
+  const dwtProductKey = (import.meta.env.VITE_DWT_PRODUCT_KEY || dwtDemoProductKey).trim();
+
+  const openScanDialog = useCallback(() => {
+    setScanDialogOpen(true);
+    setScanDialogStatus('connecting');
+    setScanDialogError(null);
+    setScanDialogPageCount(0);
+
+    ensureDwtInstance(dwtProductKey)
+      .then((instance) => {
+        dwtRef.current = instance;
+        setScanDialogStatus('ready');
+      })
+      .catch((err: unknown) => {
+        dwtRef.current = null;
+        setScanDialogError(err instanceof Error ? err.message : 'Skan xidməti başladılmadı.');
+        setScanDialogStatus('error');
+      });
+  }, [dwtProductKey]);
+
+  function closeScanDialog() {
+    setScanDialogOpen(false);
+    setScanDialogStatus('idle');
+    setScanDialogError(null);
+    setScanDialogPageCount(0);
+    setDocumentScanLoading(false);
+  }
+
+  async function handleScanFromScanner() {
+    const webTwain = dwtRef.current;
+    const dwt = getDynamsoftNamespace()?.DWT;
+
+    if (!webTwain || !dwt?.EnumDWT_ImageType) return;
+
+    setScanDialogStatus('scanning');
+    setDocumentScanLoading(true);
+
+    try {
+      const startIndex = Number(webTwain.HowManyImagesInBuffer ?? 0);
+
+      await webTwain.SelectSourceAsync();
+      await webTwain.AcquireImageAsync({
+        IfShowUI: true,
+        Resolution: 300,
+        IfCloseSourceAfterAcquire: true,
+        IfDisableSourceAfterAcquire: true
+      });
+
+      const newPageCount = Number(webTwain.HowManyImagesInBuffer ?? 0) - startIndex;
+      setScanDialogPageCount(newPageCount);
+
+      if (newPageCount > 0) {
+        const scannedFile = await convertScannedPagesToPdfFile(webTwain, dwt.EnumDWT_ImageType, startIndex);
+        setDocumentFormUpload((current) => ({
+          ...current,
+          files: appendSelectedFiles(current.files, [scannedFile])
+        }));
+        setScanDialogStatus('done');
+      } else {
+        setScanDialogStatus('ready');
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Skan zamanı naməlum xəta baş verdi.';
+      setScanDialogError(message);
+      setScanDialogStatus('error');
+    } finally {
+      setDocumentScanLoading(false);
+    }
+  }
 
   const handleConfirmDelete = async () => {
     if (!confirmDelete.onConfirm) return;
@@ -971,6 +1173,17 @@ export function DocumentsPage({
                           event.currentTarget.value = '';
                         }}
                       />
+                    </Button>
+
+                    <Button
+                      variant="outlined"
+                      color="secondary"
+                      startIcon={<DocumentScannerRounded />}
+                      onClick={openScanDialog}
+                      disabled={documentSubmitLoading}
+                      sx={{ alignSelf: { xs: 'stretch', md: 'center' } }}
+                    >
+                      Skan et
                     </Button>
 
                     <FormControlLabel
@@ -1712,6 +1925,100 @@ export function DocumentsPage({
           >
             Arxivlə
           </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Scanner Dialog */}
+      <Dialog open={scanDialogOpen} onClose={closeScanDialog} maxWidth="xs" fullWidth>
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+          <ScannerRounded color="primary" />
+          Skaner
+        </DialogTitle>
+
+        <DialogContent>
+          {scanDialogStatus === 'connecting' && (
+            <Stack spacing={2} alignItems="center" py={2}>
+              <CircularProgress size={48} />
+              <Typography variant="body2" color="text.secondary">
+                Skan xidmətinə qoşulunur...
+              </Typography>
+              <LinearProgress sx={{ width: '100%', borderRadius: 1 }} />
+            </Stack>
+          )}
+
+          {scanDialogStatus === 'error' && (
+            <Stack spacing={2} py={1}>
+              <Alert
+                severity="warning"
+                icon={<ErrorOutlineRounded />}
+                sx={{ alignItems: 'flex-start' }}
+              >
+                <Typography variant="body2" fontWeight={600} mb={0.5}>
+                  Skan xidməti tapılmadı
+                </Typography>
+                <Typography variant="caption" display="block" mb={1}>
+                  {scanDialogError}
+                </Typography>
+                <Typography variant="caption" display="block">
+                  Skaner istifadə etmək üçün Dynamsoft Service-i quraşdırın.
+                </Typography>
+              </Alert>
+              <Button
+                variant="outlined"
+                size="small"
+                href="https://demo.dynamsoft.com/DWT/DWTResources/dist/dist/DynamsoftServiceSetup.msi"
+                target="_blank"
+                rel="noopener noreferrer"
+                sx={{ alignSelf: 'flex-start' }}
+              >
+                Dynamsoft Service-i yüklə
+              </Button>
+              <Typography variant="caption" color="text.secondary">
+                Quraşdırdıqdan sonra bu pəncərəni bağlayıb yenidən açın.
+              </Typography>
+            </Stack>
+          )}
+
+          {scanDialogStatus === 'ready' && (
+            <Stack spacing={2} py={1}>
+              <Alert severity="success" icon={<CheckCircleOutlineRounded />}>
+                Skaner xidməti hazırdır. Skan etməyə başlaya bilərsiniz.
+              </Alert>
+            </Stack>
+          )}
+
+          {scanDialogStatus === 'scanning' && (
+            <Stack spacing={2} alignItems="center" py={2}>
+              <CircularProgress size={48} />
+              <Typography variant="body2" color="text.secondary">
+                Skan edilir, xahiş edirik gözləyin...
+              </Typography>
+            </Stack>
+          )}
+
+          {scanDialogStatus === 'done' && (
+            <Stack spacing={2} py={1}>
+              <Alert severity="success" icon={<CheckCircleOutlineRounded />}>
+                {scanDialogPageCount} səhifə uğurla skan edildi və fayl siyahısına əlavə olundu.
+              </Alert>
+            </Stack>
+          )}
+        </DialogContent>
+
+        <DialogActions>
+          <Button onClick={closeScanDialog}>
+            {scanDialogStatus === 'done' ? 'Bağla' : 'Ləğv et'}
+          </Button>
+          {(scanDialogStatus === 'ready' || scanDialogStatus === 'done') && (
+            <Button
+              variant="contained"
+              startIcon={documentScanLoading ? <CircularProgress size={16} color="inherit" /> : <DocumentScannerRounded />}
+              onClick={() => void handleScanFromScanner()}
+              disabled={documentScanLoading}
+            >
+              {documentScanLoading ? 'Skan edilir...' : 'Skan et'}
+            </Button>
+          )}
         </DialogActions>
       </Dialog>
 

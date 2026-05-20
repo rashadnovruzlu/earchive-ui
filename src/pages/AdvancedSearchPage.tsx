@@ -1,4 +1,4 @@
-import React, { FormEvent, useEffect, useState } from 'react';
+import React, { FormEvent, useEffect, useMemo, useState } from 'react';
 import {
   Accordion,
   AccordionDetails,
@@ -39,6 +39,12 @@ import InfoOutlined from '@mui/icons-material/InfoOutlined';
 import { useAuth } from '../features/auth/AuthProvider';
 import { api } from '../lib/api';
 import type { AdvancedDocumentSearchResult, DocumentDetail, LogicalLocation } from '../types/api';
+import { HighlightSnippetList } from '../components/HighlightSnippetList';
+import {
+  FILE_HIGHLIGHT_SNIPPET_LIMIT,
+  mergeFileHighlights,
+  sanitizeHighlightHtml
+} from '../lib/advancedSearchHighlights';
 
 type Notice = {
   tone: 'success' | 'error';
@@ -89,9 +95,26 @@ export function AdvancedSearchPage({ setNotice, onGoToDocument }: AdvancedSearch
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [detailCache, setDetailCache] = useState<DetailCache>({});
   const [pdfView, setPdfView] = useState<PdfViewState>({ open: false, maximized: false, blobUrl: null, fileName: '', isPdf: true });
+  const [expandedFileHighlights, setExpandedFileHighlights] = useState<Record<string, boolean>>({});
 
   const imageExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.svg'];
   const isImageFileName = (fileName: string) => imageExtensions.some((ext) => fileName.toLowerCase().endsWith(ext));
+
+  const displayResults = useMemo(
+    () => results.map((item) => ({
+      ...item,
+      highlights: (item.highlights || []).map(sanitizeHighlightHtml),
+      fileHighlights: mergeFileHighlights(item.fileIds, item.fileNames, item.fileHighlights || []).map((file) => ({
+        ...file,
+        highlights: file.highlights.map(sanitizeHighlightHtml)
+      }))
+    })),
+    [results]
+  );
+
+  useEffect(() => {
+    setExpandedFileHighlights({});
+  }, [results]);
 
   useEffect(() => {
     let isCancelled = false;
@@ -395,7 +418,7 @@ export function AdvancedSearchPage({ setNotice, onGoToDocument }: AdvancedSearch
               </Typography>
             </Stack>
           </Stack>
-        ) : results.length === 0 ? (
+        ) : displayResults.length === 0 ? (
           <Stack alignItems="center" justifyContent="center" spacing={2} sx={{ py: 10 }}>
             <Box sx={{
               width: 72, height: 72, borderRadius: '50%',
@@ -411,7 +434,7 @@ export function AdvancedSearchPage({ setNotice, onGoToDocument }: AdvancedSearch
           </Stack>
         ) : (
           <Stack spacing={0}>
-            {results.map((item, index) => {
+            {displayResults.map((item, index) => {
               const isExpanded = expandedId === item.documentId;
               const cache = detailCache[item.documentId];
               const detail = cache?.data;
@@ -437,7 +460,7 @@ export function AdvancedSearchPage({ setNotice, onGoToDocument }: AdvancedSearch
                     direction={{ xs: 'column', sm: 'row' }}
                     spacing={1.5}
                     alignItems={{ xs: 'flex-start', sm: 'center' }}
-                    sx={{ px: 2.5, pt: 2, pb: item.fileIds.length > 0 ? 1 : 2 }}
+                    sx={{ px: 2.5, pt: 2, pb: item.fileHighlights.length > 0 || item.highlights.length > 0 ? 1 : 2 }}
                   >
                     {/* Score indicator */}
                     <Stack alignItems="center" spacing={0.5} sx={{ minWidth: 44 }}>
@@ -503,66 +526,109 @@ export function AdvancedSearchPage({ setNotice, onGoToDocument }: AdvancedSearch
                     </Stack>
                   </Stack>
 
+                  {item.highlights.length > 0 && (
+                    <HighlightSnippetList
+                      snippets={item.highlights}
+                      typographyVariant="body2"
+                      sx={{ px: 2.5, pb: 1.5 }}
+                      testIdPrefix={`top-highlight-${item.documentId}`}
+                    />
+                  )}
+
                   {/* ─ File chips ─── */}
                   {item.fileIds.length > 0 && (
-                    <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap sx={{ px: 2.5, pb: 1.75 }}>
-                      {item.fileIds.map((fileId, idx) => {
-                        const fileName = item.fileNames[idx] ?? fileId;
+                    <Stack spacing={1} sx={{ px: 2.5, pb: 1.75 }}>
+                      {item.fileHighlights.map((file) => {
+                        const fileName = file.fileName;
+                        const fileId = file.fileId;
                         const isPdf = fileName.toLowerCase().endsWith('.pdf');
                         const isImage = isImageFileName(fileName);
                         const isPreviewable = isPdf || isImage;
+                        const fileHighlightKey = `${item.documentId}:${fileId}`;
+                        const isFileExpanded = Boolean(expandedFileHighlights[fileHighlightKey]);
+
                         return (
-                          <Stack
+                          <Box
                             key={fileId}
-                            direction="row"
-                            alignItems="center"
-                            spacing={0}
                             sx={{
                               border: '1px solid',
-                              borderColor: isPdf ? alpha(theme.palette.error.main, 0.3) : 'divider',
+                              borderColor: file.highlights.length > 0 ? alpha(theme.palette.primary.main, 0.2) : isPdf ? alpha(theme.palette.error.main, 0.3) : 'divider',
                               borderRadius: 1,
-                              bgcolor: isPdf ? alpha(theme.palette.error.main, 0.04) : 'grey.50',
+                              bgcolor: file.highlights.length > 0 ? alpha(theme.palette.primary.main, 0.03) : isPdf ? alpha(theme.palette.error.main, 0.04) : 'grey.50',
                               overflow: 'hidden',
                               transition: 'border-color 0.15s',
                               '&:hover': { borderColor: isPdf ? 'error.light' : 'primary.light' },
                             }}
                           >
-                            <Stack direction="row" spacing={0.5} alignItems="center" sx={{ pl: 1, pr: 0.75, py: 0.5 }}>
-                              {isPdf
-                                ? <PictureAsPdfRounded sx={{ fontSize: 14, color: 'error.main' }} />
-                                : <InsertDriveFileOutlined sx={{ fontSize: 14, color: 'text.disabled' }} />}
-                              <Typography variant="caption" sx={{ fontWeight: 600, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                {fileName}
-                              </Typography>
-                            </Stack>
-                            <Stack direction="row" sx={{ borderLeft: '1px solid', borderColor: 'divider' }}>
-                              {isPreviewable && (
-                                <Tooltip title="Öncədən bax">
+                            <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1} sx={{ pl: 1, pr: 0, py: 0.5 }}>
+                              <Stack direction="row" spacing={0.5} alignItems="center" sx={{ minWidth: 0, pr: 0.75 }}>
+                                {isPdf
+                                  ? <PictureAsPdfRounded sx={{ fontSize: 14, color: 'error.main' }} />
+                                  : <InsertDriveFileOutlined sx={{ fontSize: 14, color: 'text.disabled' }} />}
+                                <Typography variant="caption" sx={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {fileName}
+                                </Typography>
+                              </Stack>
+                              <Stack direction="row" sx={{ borderLeft: '1px solid', borderColor: 'divider', flexShrink: 0 }}>
+                                {isPreviewable && (
+                                  <Tooltip title="Öncədən bax">
+                                    <IconButton
+                                      size="small"
+                                      onClick={() => void handleFilePreview(fileId, fileName, isPdf)}
+                                      sx={{ borderRadius: 0, px: 0.75, py: 0.5, '&:hover': { bgcolor: alpha(theme.palette.error.main, 0.08) } }}
+                                    >
+                                      <VisibilityRounded sx={{ fontSize: 13, color: 'error.main' }} />
+                                    </IconButton>
+                                  </Tooltip>
+                                )}
+                                <Tooltip title="Yüklə">
                                   <IconButton
                                     size="small"
-                                    onClick={() => void handleFilePreview(fileId, fileName, isPdf)}
-                                    sx={{ borderRadius: 0, px: 0.75, py: 0.5, '&:hover': { bgcolor: alpha(theme.palette.error.main, 0.08) } }}
+                                    onClick={() => void handleDownload(fileId, fileName)}
+                                    sx={{
+                                      borderRadius: 0,
+                                      px: 0.75,
+                                      py: 0.5,
+                                      borderLeft: isPreviewable ? '1px solid' : 'none',
+                                      borderColor: 'divider',
+                                      '&:hover': { bgcolor: alpha(theme.palette.primary.main, 0.08) }
+                                    }}
                                   >
-                                    <VisibilityRounded sx={{ fontSize: 13, color: 'error.main' }} />
+                                    <DownloadRounded sx={{ fontSize: 13, color: 'primary.main' }} />
                                   </IconButton>
                                 </Tooltip>
-                              )}
-                              <Tooltip title="Yüklə">
-                                <IconButton
-                                  size="small"
-                                  onClick={() => void handleDownload(fileId, fileName)}
+                              </Stack>
+                            </Stack>
+
+                            {file.highlights.length > 0 ? (
+                              <Stack spacing={0.5} sx={{ px: 1, pb: 1, pt: 0.25 }}>
+                                <Typography
+                                  variant="caption"
                                   sx={{
-                                    borderRadius: 0, px: 0.75, py: 0.5,
-                                    borderLeft: isPdf ? '1px solid' : 'none',
-                                    borderColor: 'divider',
-                                    '&:hover': { bgcolor: alpha(theme.palette.primary.main, 0.08) }
+                                    color: 'text.disabled',
+                                    fontSize: '0.65rem',
+                                    fontWeight: 700,
+                                    textTransform: 'uppercase',
+                                    letterSpacing: 0.35
                                   }}
                                 >
-                                  <DownloadRounded sx={{ fontSize: 13, color: 'primary.main' }} />
-                                </IconButton>
-                              </Tooltip>
-                            </Stack>
-                          </Stack>
+                                  OCR uyğunluqları
+                                </Typography>
+                                <HighlightSnippetList
+                                  snippets={file.highlights}
+                                  expanded={isFileExpanded}
+                                  limit={FILE_HIGHLIGHT_SNIPPET_LIMIT}
+                                  onToggle={() =>
+                                    setExpandedFileHighlights((current) => ({
+                                      ...current,
+                                      [fileHighlightKey]: !current[fileHighlightKey]
+                                    }))
+                                  }
+                                  testIdPrefix={`file-highlight-${item.documentId}-${fileId}`}
+                                />
+                              </Stack>
+                            ) : null}
+                          </Box>
                         );
                       })}
                     </Stack>
