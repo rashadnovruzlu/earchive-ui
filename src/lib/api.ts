@@ -50,6 +50,8 @@ import type {
   UpdateBaseDocumentPayload,
   UpdateDocumentPayload,
   UpdateUserDocumentTypeAccessPayload,
+  Organization,
+  OrganizationPayload,
   OrgStructureType,
   OrgStructureTypePayload,
   OrgStructureNode,
@@ -247,6 +249,26 @@ export const api = {
 
   deleteOrgStructureType: (id: number) =>
     request<null>(`/api/organizational-structure-types/${id}`, {
+      method: 'DELETE'
+    }),
+
+  getOrganizations: () =>
+    request<Organization[]>('/api/organizations'),
+
+  createOrganization: (payload: OrganizationPayload) =>
+    request<Organization>('/api/organizations', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
+
+  updateOrganization: (id: number, payload: OrganizationPayload) =>
+    request<Organization>(`/api/organizations/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload)
+    }),
+
+  deleteOrganization: (id: number) =>
+    request<null>(`/api/organizations/${id}`, {
       method: 'DELETE'
     }),
 

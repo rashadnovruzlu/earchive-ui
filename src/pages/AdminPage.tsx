@@ -70,6 +70,7 @@ import LockOpenRounded from '@mui/icons-material/LockOpenRounded';
 import LockRounded from '@mui/icons-material/LockRounded';
 import LogoutRounded from '@mui/icons-material/LogoutRounded';
 import MenuRounded from '@mui/icons-material/MenuRounded';
+import SearchRounded from '@mui/icons-material/SearchRounded';
 import KeyRounded from '@mui/icons-material/KeyRounded';
 import AccountCircleRounded from '@mui/icons-material/AccountCircleRounded';
 import DoneAllRounded from '@mui/icons-material/DoneAllRounded';
@@ -99,6 +100,7 @@ import { LocationsPage } from './LocationsPage';
 import { UserDocumentTypeAccessPage } from './UserDocumentTypeAccessPage';
 import OrganizationStructurePage from './OrganizationStructurePage';
 import OrganizationStructureTypesPage from './OrganizationStructureTypesPage';
+import OrganizationPage from './OrganizationPage';
 import {
   type BaseDocument,
   type BaseDocumentFile,
@@ -144,6 +146,7 @@ type SectionId =
   | 'documentMovements'
   | 'advancedSearch'
   | 'locations'
+  | 'organizations'
   | 'organizationStructure'
   | 'organizationStructureTypes';
 
@@ -264,12 +267,13 @@ const navigation = [
   { id: 'documentMovements' as const, label: 'Sənəd hərəkətləri', icon: CompareArrowsRounded },
   { id: 'advancedSearch' as const, label: 'Məzmun axtarışı', icon: ManageSearchRounded },
   { id: 'locations' as const, label: 'Yerləşdirmələr', icon: StorageRounded },
+  { id: 'organizations' as const, label: 'Təşkilatlar', icon: GroupsRounded },
   { id: 'organizationStructure' as const, label: 'Təşkilat strukturu', icon: AccountTreeRounded },
   { id: 'organizationStructureTypes' as const, label: 'Struktur növləri', icon: BadgeRounded }
 ];
 
 const navigationGroups: Array<{ title: string; items: SectionId[] }> = [
-  { title: 'Təşkilatlar', items: ['organizationStructure', 'organizationStructureTypes'] },
+  { title: 'Təşkilatlar', items: ['organizations', 'organizationStructure', 'organizationStructureTypes'] },
   { title: 'Hesab', items: ['profile', 'users', 'roles', 'permissions', 'userDocumentTypeAccess'] },
   { title: 'Sənəd növü sazlamaları', items: ['locations', 'documentTypes'] },
   { title: 'Sənədlər', items: ['advancedSearch', 'fileProcessings', 'baseDocuments', 'documents', 'documentMovements'] },
@@ -287,6 +291,7 @@ const sectionPermissionKeywords: Record<Exclude<SectionId, 'overview' | 'profile
   documentMovements: ['documentmovements', 'document-movements', 'movements'],
   advancedSearch: ['advanced-search', 'document-search', 'documents'],
   locations: ['logical-locations', 'physical-locations', 'locations'],
+  organizations: ['organizations', 'organization'],
   organizationStructure: ['organizational-structures', 'organizationalstructures'],
   organizationStructureTypes: ['organizational-structure-types', 'organizationalstructuretypes']
 };
@@ -529,6 +534,7 @@ export function AdminPage() {
   const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
   const [isNotificationsLoading, setIsNotificationsLoading] = useState(false);
   const [notificationsAvailable, setNotificationsAvailable] = useState(true);
+  const [navigationSearch, setNavigationSearch] = useState('');
 
   const filteredUsers = useMemo(() => {
     const query = userSearch.trim().toLowerCase();
@@ -587,6 +593,7 @@ export function AdminPage() {
         documentMovements: true,
         advancedSearch: true,
         locations: true,
+        organizations: true,
         organizationStructure: true,
         organizationStructureTypes: true
       } satisfies Record<SectionId, boolean>;
@@ -606,6 +613,7 @@ export function AdminPage() {
       documentMovements: false,
       advancedSearch: false,
       locations: false,
+      organizations: false,
       organizationStructure: false,
       organizationStructureTypes: false
     };
@@ -640,7 +648,10 @@ export function AdminPage() {
       access.documents ||
       access.documentMovements ||
       access.advancedSearch ||
-      access.locations;
+      access.locations ||
+      access.organizations ||
+      access.organizationStructure ||
+      access.organizationStructureTypes;
 
     return access;
   }, [currentUserActions, currentUserRoleNames]);
@@ -668,17 +679,49 @@ export function AdminPage() {
     [visibleNavigation]
   );
 
+  const normalizeNavigationSearch = (value: string) => value.trim().toLocaleLowerCase('az-AZ');
+
+  const filteredOverviewNavigationItem = useMemo(() => {
+    if (!overviewNavigationItem) {
+      return null;
+    }
+
+    const query = normalizeNavigationSearch(navigationSearch);
+    if (!query) {
+      return overviewNavigationItem;
+    }
+
+    return normalizeNavigationSearch(overviewNavigationItem.label).includes(query) ? overviewNavigationItem : null;
+  }, [navigationSearch, overviewNavigationItem]);
+
+  const filteredNavigationGroups = useMemo(() => {
+    const query = normalizeNavigationSearch(navigationSearch);
+    if (!query) {
+      return visibleNavigationGroups;
+    }
+
+    return visibleNavigationGroups
+      .map((group) => {
+        const isGroupMatch = normalizeNavigationSearch(group.title).includes(query);
+        const items = isGroupMatch
+          ? group.items
+          : group.items.filter((item) => normalizeNavigationSearch(item.label).includes(query));
+        return { ...group, items };
+      })
+      .filter((group) => group.items.length > 0);
+  }, [navigationSearch, visibleNavigationGroups]);
+
   const [collapsedNavigationGroups, setCollapsedNavigationGroups] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     setCollapsedNavigationGroups((current) => {
       const next: Record<string, boolean> = {};
-      for (const group of visibleNavigationGroups) {
+      for (const group of filteredNavigationGroups) {
         next[group.title] = current[group.title] ?? false;
       }
       return next;
     });
-  }, [visibleNavigationGroups]);
+  }, [filteredNavigationGroups]);
 
   const hasAnyAccessibleSection = useMemo(
     () => visibleNavigation.some((item) => item.id !== 'overview'),
@@ -1504,12 +1547,36 @@ export function AdminPage() {
       </Box>
 
       <List sx={{ px: 1.5 }}>
-        {overviewNavigationItem ? (
+        <TextField
+          size="small"
+          fullWidth
+          value={navigationSearch}
+          onChange={(event) => setNavigationSearch(event.target.value)}
+          placeholder="Səhifə adı ilə axtar"
+          autoComplete="off"
+          InputProps={{
+            startAdornment: <SearchRounded sx={{ fontSize: 16, color: 'rgba(255,255,255,0.7)', mr: 0.75 }} />
+          }}
+          sx={{
+            mb: 1.25,
+            '& .MuiOutlinedInput-root': {
+              color: 'rgba(255,255,255,0.9)',
+              bgcolor: alpha('#ffffff', 0.06),
+              borderRadius: 2,
+              '& fieldset': { borderColor: alpha('#ffffff', 0.18) },
+              '&:hover fieldset': { borderColor: alpha('#ffffff', 0.28) },
+              '&.Mui-focused fieldset': { borderColor: alpha('#ffffff', 0.45) }
+            },
+            '& .MuiInputBase-input::placeholder': { color: 'rgba(255,255,255,0.68)', opacity: 1 }
+          }}
+        />
+
+        {filteredOverviewNavigationItem ? (
           <Box sx={{ mb: 1.25 }}>
             <ListItemButton
-              selected={activeSection === overviewNavigationItem.id}
+              selected={activeSection === filteredOverviewNavigationItem.id}
               onClick={() => {
-                setActiveSection(overviewNavigationItem.id);
+                setActiveSection(filteredOverviewNavigationItem.id);
                 setMobileNavOpen(false);
               }}
               sx={{
@@ -1527,12 +1594,12 @@ export function AdminPage() {
               <ListItemIcon sx={{ minWidth: 42, color: 'inherit' }}>
                 <DashboardRounded />
               </ListItemIcon>
-              <ListItemText primary={overviewNavigationItem.label} />
+              <ListItemText primary={filteredOverviewNavigationItem.label} />
             </ListItemButton>
           </Box>
         ) : null}
 
-        {visibleNavigationGroups.map((group) => (
+        {filteredNavigationGroups.map((group) => (
           <Box key={group.title} sx={{ mb: 1.25 }}>
             <ListItemButton
               onClick={() =>
@@ -1606,6 +1673,14 @@ export function AdminPage() {
             </Collapse>
           </Box>
         ))}
+
+        {navigationSearch.trim() && !filteredOverviewNavigationItem && filteredNavigationGroups.length === 0 ? (
+          <Box sx={{ px: 1.25, py: 1.5 }}>
+            <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.72)' }}>
+              Uyğun səhifə tapılmadı.
+            </Typography>
+          </Box>
+        ) : null}
       </List>
 
       <Box sx={{ mt: 'auto', px: 2.5, py: 3 }} />
@@ -3373,6 +3448,10 @@ export function AdminPage() {
 
             {activeSection === 'locations' && sectionAccess.locations ? (
               <LocationsPage />
+            ) : null}
+
+            {activeSection === 'organizations' && sectionAccess.organizations ? (
+              <OrganizationPage />
             ) : null}
 
             {activeSection === 'organizationStructure' && sectionAccess.organizationStructure ? (

@@ -1,4 +1,4 @@
-import React, { FormEvent, useEffect, useMemo, useState } from 'react';
+import React, { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Accordion,
   AccordionDetails,
@@ -82,6 +82,7 @@ function flattenLogicalLocations(nodes: LogicalLocation[], depth = 0): LogicalLo
 export function AdvancedSearchPage({ setNotice, onGoToDocument }: AdvancedSearchPageProps) {
   const { logout } = useAuth();
   const theme = useTheme();
+  const inlinePreviewRef = useRef<HTMLDivElement | null>(null);
   const [searchInput, setSearchInput] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [results, setResults] = useState<AdvancedDocumentSearchResult[]>([]);
@@ -115,6 +116,15 @@ export function AdvancedSearchPage({ setNotice, onGoToDocument }: AdvancedSearch
   useEffect(() => {
     setExpandedFileHighlights({});
   }, [results]);
+
+  useEffect(() => {
+    if (!pdfView.open || pdfView.maximized || !pdfView.blobUrl) {
+      return;
+    }
+
+    inlinePreviewRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    inlinePreviewRef.current?.focus({ preventScroll: true });
+  }, [pdfView.blobUrl, pdfView.maximized, pdfView.open]);
 
   useEffect(() => {
     let isCancelled = false;
@@ -768,7 +778,7 @@ export function AdvancedSearchPage({ setNotice, onGoToDocument }: AdvancedSearch
 
       {/* ══ PDF INLINE PANEL (non-maximized) ═══════════════════════ */}
       {pdfView.open && !pdfView.maximized && pdfView.blobUrl && (
-        <Paper variant="outlined" sx={{ borderRadius: 0, overflow: 'hidden' }}>
+        <Paper ref={inlinePreviewRef} tabIndex={-1} variant="outlined" sx={{ borderRadius: 0, overflow: 'hidden', outline: 'none' }}>
           <Stack
             direction="row"
             justifyContent="space-between"

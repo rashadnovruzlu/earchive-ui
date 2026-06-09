@@ -590,6 +590,19 @@ export type OrgStructureTypePayload = {
   name: string;
 };
 
+export type Organization = {
+  id: number;
+  name: string;
+  email?: string | null;
+  phone?: string | null;
+};
+
+export type OrganizationPayload = {
+  name: string;
+  email?: string | null;
+  phone?: string | null;
+};
+
 export type OrgStructureNode = {
   id: number;
   organizationalStructureTypeId: number;
