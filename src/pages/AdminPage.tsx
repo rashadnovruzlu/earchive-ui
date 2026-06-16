@@ -110,6 +110,7 @@ import {
   type FileProcessing,
   type FileProcessingStatusName,
   type Notification,
+  type Organization,
   type OrgStructureNode,
   type ReferenceOption,
   type ReferenceRecord,
@@ -170,6 +171,7 @@ type UserFormState = {
   fullName: string;
   email: string;
   phoneNumber: string;
+  organizationId?: number;
   organizationalStructureId?: number;
   roleIds: string[];
 };
@@ -327,6 +329,7 @@ const emptyUserForm = (): UserFormState => ({
   fullName: '',
   email: '',
   phoneNumber: '',
+  organizationId: undefined,
   organizationalStructureId: undefined,
   roleIds: []
 });
@@ -449,11 +452,19 @@ export function AdminPage() {
   const [totalUsers, setTotalUsers] = useState(0);
   const [roles, setRoles] = useState<Role[]>([]);
   const [documentTypes, setDocumentTypes] = useState<DocumentType[]>([]);
-  const [orgStructureNodes, setOrgStructureNodes] = useState<Array<{ id: number; name: string; depth: number }>>([]);
+  const [orgStructureNodes, setOrgStructureNodes] = useState<Array<{ id: number; name: string; depth: number; organizationId?: number | null }>>([]);
+  const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [selectedRoleId, setSelectedRoleId] = useState('');
   const [permissionMatrix, setPermissionMatrix] = useState<RolePermissionMatrix | null>(null);
   const [selectedActionIds, setSelectedActionIds] = useState<Set<string>>(new Set());
   const [userForm, setUserForm] = useState<UserFormState>(emptyUserForm());
+  const filteredOrgStructureNodes = useMemo(
+    () =>
+      userForm.organizationId
+        ? orgStructureNodes.filter((node) => node.organizationId === userForm.organizationId)
+        : orgStructureNodes,
+    [orgStructureNodes, userForm.organizationId]
+  );
   const [roleForm, setRoleForm] = useState<RoleFormState>(emptyRoleForm());
   const [documentTypeForm, setDocumentTypeForm] = useState<DocumentTypeFormState>(emptyDocumentTypeForm());
   const [notice, setNotice] = useState<Notice | null>(null);
@@ -621,11 +632,18 @@ export function AdminPage() {
     for (const action of currentUserActions) {
       const haystack = `${action.controllerName} ${action.actionName} ${action.route}`.toLowerCase();
       (Object.keys(sectionPermissionKeywords) as Array<Exclude<SectionId, 'overview' | 'profile'>>).forEach((section) => {
+        if (section === 'organizations') {
+          return;
+        }
+
         if (sectionPermissionKeywords[section].some((key) => haystack.includes(key))) {
           access[section] = true;
         }
       });
     }
+
+    // Organization management is admin-only. Non-admins should never see the organizations section.
+    access.organizations = false;
 
     // This section must be visible only if user has receiver endpoint permission.
     access.documentMovements = currentUserActions.some((action) => {
@@ -1105,13 +1123,25 @@ export function AdminPage() {
 
     void (async () => {
       try {
-        const tree = await api.getOrgStructureTree();
+        const [tree, orgs] = await Promise.all([api.getOrgStructureTree(), api.getOrganizations()]);
         setOrgStructureNodes(flattenOrgStructure(tree));
+        setOrganizations(orgs);
       } catch {
         setOrgStructureNodes([]);
+        setOrganizations([]);
       }
     })();
   }, [userFormOpen]);
+
+  useEffect(() => {
+    if (!userForm.organizationId || !userForm.organizationalStructureId) {
+      return;
+    }
+
+    if (!filteredOrgStructureNodes.some((node) => node.id === userForm.organizationalStructureId)) {
+      setUserForm((current) => ({ ...current, organizationalStructureId: undefined }));
+    }
+  }, [filteredOrgStructureNodes, userForm.organizationId, userForm.organizationalStructureId]);
 
   async function runAction(action: () => Promise<void>, successMessage: string) {
     setIsBusy(true);
@@ -1165,9 +1195,9 @@ export function AdminPage() {
     setDocumentTypes(result);
   }
 
-  function flattenOrgStructure(nodes: OrgStructureNode[], depth = 0): Array<{ id: number; name: string; depth: number }> {
+  function flattenOrgStructure(nodes: OrgStructureNode[], depth = 0): Array<{ id: number; name: string; depth: number; organizationId?: number | null }> {
     return nodes.flatMap((node) => [
-      { id: node.id, name: node.name, depth },
+      { id: node.id, name: node.name, depth, organizationId: node.organizationId },
       ...flattenOrgStructure(node.children, depth + 1)
     ]);
   }
@@ -1306,6 +1336,7 @@ export function AdminPage() {
           fullName: userForm.fullName || undefined,
           email: userForm.email || undefined,
           phoneNumber: userForm.phoneNumber || undefined,
+          organizationId: userForm.organizationId || null,
           organizationalStructureId: userForm.organizationalStructureId || null,
           roleIds: userForm.roleIds
         });
@@ -2165,6 +2196,22 @@ export function AdminPage() {
                           <TextField label="E-poçt" type="email" value={userForm.email} onChange={(e) => setUserForm((c) => ({ ...c, email: e.target.value }))} fullWidth />
                         </Box>
                         <TextField label="Telefon nömrəsi" value={userForm.phoneNumber} onChange={(e) => setUserForm((c) => ({ ...c, phoneNumber: e.target.value }))} fullWidth />
+                        {!userForm.id ? (
+                          <TextField
+                            select
+                            label="Təşkilat"
+                            value={userForm.organizationId ?? ''}
+                            onChange={(e) => setUserForm((c) => ({ ...c, organizationId: e.target.value ? Number(e.target.value) : undefined }))}
+                            fullWidth
+                          >
+                            <MenuItem value="">Seçilməmiş</MenuItem>
+                            {organizations.map((org) => (
+                              <MenuItem key={org.id} value={org.id}>
+                                {org.name}
+                              </MenuItem>
+                            ))}
+                          </TextField>
+                        ) : null}
                         <TextField
                           select
                           label="Təşkilat Bölməsi"
@@ -2173,7 +2220,7 @@ export function AdminPage() {
                           fullWidth
                         >
                           <MenuItem value="">Seçilməmiş</MenuItem>
-                          {orgStructureNodes.map((node) => (
+                          {filteredOrgStructureNodes.map((node) => (
                             <MenuItem key={node.id} value={node.id}>
                               {'\u00A0'.repeat(node.depth * 2)}{node.name}
                             </MenuItem>

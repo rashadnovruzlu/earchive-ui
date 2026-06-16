@@ -327,6 +327,7 @@ export type CreateUserPayload = {
   fullName?: string;
   email?: string;
   phoneNumber?: string;
+  organizationId?: number | null;
   organizationalStructureId?: number | null;
   roleIds: string[];
 };
@@ -605,6 +606,7 @@ export type OrganizationPayload = {
 
 export type OrgStructureNode = {
   id: number;
+  organizationId?: number | null;
   organizationalStructureTypeId: number;
   typeName: string;
   parentId?: number | null;
