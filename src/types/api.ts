@@ -313,6 +313,8 @@ export type User = {
   email?: string | null;
   phoneNumber?: string | null;
   isLocked: boolean;
+  organizationId?: number | null;
+  organizationName?: string | null;
   organizationalStructureId?: number | null;
   organizationalStructureName?: string | null;
   createdDate: string;
@@ -337,6 +339,7 @@ export type UpdateUserPayload = {
   fullName?: string;
   email?: string;
   phoneNumber?: string;
+  organizationId?: number | null;
   organizationalStructureId?: number | null;
 };
 

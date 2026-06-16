@@ -1325,6 +1325,7 @@ export function AdminPage() {
           fullName: userForm.fullName || undefined,
           email: userForm.email || undefined,
           phoneNumber: userForm.phoneNumber || undefined,
+          organizationId: userForm.organizationId || null,
           organizationalStructureId: userForm.organizationalStructureId || null
         });
         await api.assignRoles(userForm.id, { roleIds: userForm.roleIds });
@@ -1473,6 +1474,7 @@ export function AdminPage() {
       fullName: user.fullName || '',
       email: user.email || '',
       phoneNumber: user.phoneNumber || '',
+      organizationId: user.organizationId ?? undefined,
       organizationalStructureId: user.organizationalStructureId ?? undefined,
       roleIds: user.roles.map((role) => role.id)
     });
@@ -2196,22 +2198,20 @@ export function AdminPage() {
                           <TextField label="E-poçt" type="email" value={userForm.email} onChange={(e) => setUserForm((c) => ({ ...c, email: e.target.value }))} fullWidth />
                         </Box>
                         <TextField label="Telefon nömrəsi" value={userForm.phoneNumber} onChange={(e) => setUserForm((c) => ({ ...c, phoneNumber: e.target.value }))} fullWidth />
-                        {!userForm.id ? (
-                          <TextField
-                            select
-                            label="Təşkilat"
-                            value={userForm.organizationId ?? ''}
-                            onChange={(e) => setUserForm((c) => ({ ...c, organizationId: e.target.value ? Number(e.target.value) : undefined }))}
-                            fullWidth
-                          >
-                            <MenuItem value="">Seçilməmiş</MenuItem>
-                            {organizations.map((org) => (
-                              <MenuItem key={org.id} value={org.id}>
-                                {org.name}
-                              </MenuItem>
-                            ))}
-                          </TextField>
-                        ) : null}
+                        <TextField
+                          select
+                          label="Təşkilat"
+                          value={userForm.organizationId ? String(userForm.organizationId) : ''}
+                          onChange={(e) => setUserForm((c) => ({ ...c, organizationId: e.target.value ? Number(e.target.value) : undefined }))}
+                          fullWidth
+                        >
+                          <MenuItem value="">Seçilməmiş</MenuItem>
+                          {organizations.map((org) => (
+                            <MenuItem key={org.id} value={String(org.id)}>
+                              {org.name}
+                            </MenuItem>
+                          ))}
+                        </TextField>
                         <TextField
                           select
                           label="Təşkilat Bölməsi"
@@ -2272,6 +2272,7 @@ export function AdminPage() {
                             <TableCell sx={{ color: 'white', fontWeight: 700, borderBottom: 'none' }}>İstifadəçi adı</TableCell>
                             <TableCell sx={{ color: 'white', fontWeight: 700, borderBottom: 'none' }}>Ad Soyad</TableCell>
                             <TableCell sx={{ color: 'white', fontWeight: 700, borderBottom: 'none' }}>Telefon</TableCell>
+                            <TableCell sx={{ color: 'white', fontWeight: 700, borderBottom: 'none' }}>Təşkilat</TableCell>
                             <TableCell sx={{ color: 'white', fontWeight: 700, borderBottom: 'none' }}>Struktur bölməsi</TableCell>
                             <TableCell sx={{ color: 'white', fontWeight: 700, borderBottom: 'none' }}>Status</TableCell>
                             <TableCell sx={{ color: 'white', fontWeight: 700, borderBottom: 'none' }}>Son giriş</TableCell>
@@ -2290,6 +2291,7 @@ export function AdminPage() {
                               </TableCell>
                               <TableCell><Typography variant="body2" color="text.secondary">{user.fullName || '—'}</Typography></TableCell>
                               <TableCell><Typography variant="body2" color="text.secondary">{user.phoneNumber || '—'}</Typography></TableCell>
+                              <TableCell><Typography variant="body2" color="text.secondary">{user.organizationName || organizations.find((o) => o.id === user.organizationId)?.name || '—'}</Typography></TableCell>
                               <TableCell>
                                 <Typography variant="body2" color="text.secondary">
                                   {user.organizationalStructureName || orgStructureNodes.find((n) => n.id === user.organizationalStructureId)?.name || '—'}

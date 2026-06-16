@@ -424,7 +424,7 @@ export function AdvancedSearchPage({ setNotice, onGoToDocument }: AdvancedSearch
             <Stack alignItems="center" spacing={0.5}>
               <Typography variant="subtitle2" fontWeight={600} color="text.secondary">Axtarışa başlayın</Typography>
               <Typography variant="caption" color="text.disabled" textAlign="center" sx={{ maxWidth: 320 }}>
-                Yuxarıdakı sahəyə açar söz daxil edin — sənəd fayllarının OCR mətnindən nəticələr göstəriləcək.
+                Yuxarıdakı sahəyə açar söz daxil edin. Sənəd fayllarının OCR mətnindən nəticələr göstəriləcək.
               </Typography>
             </Stack>
           </Stack>
